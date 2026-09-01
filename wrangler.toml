@@ -1,0 +1,8 @@
+name = "alphaforge"
+compatibility_date = "2024-09-01"
+
+[site]
+bucket = "./backend/static"
+
+[vars]
+ENVIRONMENT = "production"

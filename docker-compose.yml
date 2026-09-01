@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  alphaforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alphaforge_engine
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - ENVIRONMENT=production

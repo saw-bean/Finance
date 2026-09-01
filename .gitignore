@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+
+# Database & Runtime Data
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.log
+*.log
+
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+backend/static/assets/
+backend/static/index.html
+backend/static/vite.svg
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.pytest_cache/
+.coverage
+htmlcov/
