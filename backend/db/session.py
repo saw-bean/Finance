@@ -92,6 +92,16 @@ async def init_db():
                 "name": "learning_agent",
                 "display_name": "Autonomous Learning & Reflection Engine",
                 "description": "Analyzes closed trades, calculates Bayesian win rates per catalyst, and dynamically recalibrates AI conviction weights.",
+            },
+            {
+                "name": "web_intel_agent",
+                "display_name": "Live Web Intel & Bull/Bear Debate Agent",
+                "description": "Performs live web research and structured Bull vs. Bear debate synthesis on all incoming candidates.",
+            },
+            {
+                "name": "evolution_agent",
+                "display_name": "Autonomous Self-Evolution & Tool Builder",
+                "description": "Audits swarm accuracy gaps, automatically invents and builds new specialized tools, and notifies the user.",
             }
         ]
         
@@ -129,7 +139,7 @@ async def init_db():
                     total_trades=0,
                     wins=0,
                     losses=0,
-                    win_rate=0.50, # Initial prior
+                    win_rate=0.50,
                     total_pnl=0.0,
                     avg_return_pct=0.0,
                     calibrated_weight=1.0,

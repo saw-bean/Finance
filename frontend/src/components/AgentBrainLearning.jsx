@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Brain, Award, TrendingUp, AlertTriangle, CheckCircle2, XCircle, RefreshCw, BarChart2, ShieldCheck } from 'lucide-react';
+import { Sparkles, Brain, Award, TrendingUp, AlertTriangle, CheckCircle2, XCircle, RefreshCw, BarChart2, ShieldCheck, Cpu, Globe, Scale } from 'lucide-react';
 
 export default function AgentBrainLearning() {
   const [performances, setPerformances] = useState([]);
   const [reflections, setReflections] = useState([]);
+  const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,12 +15,14 @@ export default function AgentBrainLearning() {
 
   const fetchLearningData = async () => {
     try {
-      const [perfRes, reflRes] = await Promise.all([
+      const [perfRes, reflRes, logRes] = await Promise.all([
         fetch('/api/learning/performance'),
-        fetch('/api/learning/reflections?limit=25')
+        fetch('/api/learning/reflections?limit=25'),
+        fetch('/api/agent-logs?limit=50')
       ]);
       if (perfRes.ok) setPerformances(await perfRes.json());
       if (reflRes.ok) setReflections(await reflRes.json());
+      if (logRes.ok) setLogs(await logRes.json());
     } catch (e) {
       console.error(e);
     } finally {
@@ -27,21 +30,68 @@ export default function AgentBrainLearning() {
     }
   };
 
+  const autonomousUpgrades = logs.filter(l => l.message.includes('AUTONOMOUS UPGRADE') || l.message.includes('Bull Debate'));
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       
       {/* Header */}
       <div className="bg-gradient-to-r from-indigo-950/80 via-slate-900 to-slate-900 p-6 rounded-2xl border border-indigo-900/50 shadow-md">
-        <div className="flex items-center space-x-3 mb-2">
-          <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-            <Brain className="w-6 h-6" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              <Brain className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-100 flex items-center gap-2">
+                Autonomous Learning, Web Intel & Self-Evolution
+              </h2>
+              <p className="text-xs text-slate-400">
+                The AI tracks real-world win rates, conducts live Bull vs. Bear web investigations, and autonomously builds new tools when accuracy gaps are detected.
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-black text-slate-100 flex items-center gap-2">
-              Autonomous Learning & AI Track Record
-            </h2>
-            <p className="text-xs text-slate-400">
-              The AI tracks the real-world win rate of every catalyst and dynamically boosts or reduces capital allocation based on empirical evidence.
+          <span className="px-3 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs font-mono font-bold flex items-center gap-1.5 self-start md:self-auto">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Self-Evolution: Active
+          </span>
+        </div>
+      </div>
+
+      {/* Autonomous Innovations & Upgrades Feed */}
+      <div className="bg-slate-900/80 border border-indigo-900/40 rounded-2xl p-6 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-cyan-400" />
+            Autonomous System Upgrades & Tool Deployments (Zero-Permission Needed)
+          </h3>
+          <span className="text-[11px] font-mono text-slate-400">Instant Notification Feed</span>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-xs space-y-1.5">
+            <div className="flex items-center justify-between font-mono">
+              <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Live Web Intel & Bull/Bear Debate Engine
+              </span>
+              <span className="text-slate-400 text-[10px]">Active</span>
+            </div>
+            <p className="text-slate-300">
+              Auto-conducts live web searches and tests Bull vs. Bear thesis before submitting orders to the CIO.
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-xs space-y-1.5">
+            <div className="flex items-center justify-between font-mono">
+              <span className="text-cyan-400 font-bold flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5" />
+                EPS Surprise & Revision Acceleration
+              </span>
+              <span className="text-slate-400 text-[10px]">Active</span>
+            </div>
+            <p className="text-slate-300">
+              Cross-checks positive quarterly earnings acceleration on all candidate balance sheets.
             </p>
           </div>
         </div>

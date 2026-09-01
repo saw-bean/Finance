@@ -13,34 +13,33 @@ from backend.db.session import init_db
 from backend.api.routes import router as api_router
 from backend.api.websocket import ws_manager
 
-# Import Agents
+# Import Autonomous Swarm Agents
 from backend.agents.sec_edgar import sec_agent
 from backend.agents.forensic_quant import forensic_agent
 from backend.agents.contract_catalyst import contract_agent
 from backend.agents.flow_gamma import flow_agent
 from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
+from backend.agents.web_intel_agent import web_intel_agent
+from backend.agents.evolution_agent import evolution_agent
 from backend.execution.paper_engine import paper_engine
 
 # Ensure data directory exists
 os.makedirs(os.path.dirname(settings.LOG_FILE_PATH), exist_ok=True)
 
-# Comprehensive Logging Configuration (Console + Rotating File Log)
+# Comprehensive Logging Configuration
 log_formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-# Root Logger
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-# Console Handler
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
 root_logger.addHandler(console_handler)
 
-# Rotating File Handler (Max 10MB per file, keeps 5 backups)
 file_handler = RotatingFileHandler(
     settings.LOG_FILE_PATH,
     maxBytes=10 * 1024 * 1024,
@@ -61,14 +60,16 @@ async def lifespan(app: FastAPI):
     
     is_testing = os.environ.get("TESTING") == "true"
     if not is_testing:
-        logger.info("Launching autonomous agent swarm with continuous logging...")
+        logger.info("Launching autonomous 8-agent swarm with Live Web Intel & Self-Evolution...")
         await sec_agent.start()
         await forensic_agent.start()
         await contract_agent.start()
         await flow_agent.start()
+        await web_intel_agent.start()
         await cio_agent.start()
         await learning_agent.start()
-        logger.info("AlphaForge Engine is running and recording all actions to system_audit.log.")
+        await evolution_agent.start()
+        logger.info("AlphaForge Swarm is active, self-improving, and recording all actions.")
         
     yield
     
@@ -78,14 +79,16 @@ async def lifespan(app: FastAPI):
         await forensic_agent.stop()
         await contract_agent.stop()
         await flow_agent.stop()
+        await web_intel_agent.stop()
         await cio_agent.stop()
         await learning_agent.stop()
+        await evolution_agent.stop()
         logger.info("All agents stopped safely.")
 
 app = FastAPI(
     title="AlphaForge Quant & Multi-Agent Trading Engine",
     description="Autonomous institutional-grade trading intelligence running on free public data feeds.",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan
 )
 
