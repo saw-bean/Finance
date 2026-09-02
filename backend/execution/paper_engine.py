@@ -6,6 +6,7 @@ from backend.db.session import async_session_factory, commit_with_retry
 from backend.db.models import Position, Trade, AccountBalance, PortfolioSnapshot
 from backend.config import settings
 from backend.api.websocket import ws_manager
+from backend.notifications.telegram import telegram_notifier
 
 logger = logging.getLogger("alphaforge.paper_engine")
 
@@ -41,7 +42,7 @@ class PaperTradingEngine:
             }
 
     async def execute_order(self, symbol: str, side: str, qty: float, current_price: float, reason: str = "", catalyst: str = "", stop_loss_pct: float = None, take_profit_pct: float = None, broker_name: str = "SIMULATED_PAPER"):
-        """Executes a simulated paper market order with slippage, commission, and lock protection."""
+        """Executes a simulated paper market order with slippage, commission, lock protection, and Telegram alerts."""
         symbol = symbol.upper().strip()
         side = side.upper().strip()
         qty = round(float(qty), 4)
@@ -55,6 +56,12 @@ class PaperTradingEngine:
         slippage_cost = round(abs(fill_price - current_price) * qty, 4)
         commission = round(qty * self.commission_per_share, 2)
         total_order_cost = round((fill_price * qty) + commission, 2)
+
+        stop_loss_val = None
+        take_profit_val = None
+        entry_price_val = None
+        realized_pnl_val = 0.0
+        pnl_pct_val = 0.0
 
         async with self._lock:
             async with async_session_factory() as session:
@@ -77,6 +84,8 @@ class PaperTradingEngine:
                     
                     stop_loss = fill_price * (1.0 - (stop_loss_pct or settings.DEFAULT_STOP_LOSS_PCT))
                     take_profit = fill_price * (1.0 + (take_profit_pct or settings.DEFAULT_TAKE_PROFIT_PCT))
+                    stop_loss_val = stop_loss
+                    take_profit_val = take_profit
                     
                     if pos:
                         new_qty = pos.qty + qty
@@ -128,9 +137,14 @@ class PaperTradingEngine:
                         avail = pos.qty if pos else 0
                         return {"success": False, "error": f"Cannot SELL {qty} of {symbol}. Available: {avail}"}
 
+                    entry_price_val = pos.avg_entry_price
                     proceeds = (fill_price * qty) - commission
                     cost_basis = pos.avg_entry_price * qty
                     realized_pnl = round(proceeds - cost_basis, 2)
+                    pnl_pct = ((fill_price - pos.avg_entry_price) / pos.avg_entry_price) * 100 if pos.avg_entry_price > 0 else 0.0
+                    
+                    realized_pnl_val = realized_pnl
+                    pnl_pct_val = pnl_pct
 
                     acc.cash += proceeds
 
@@ -173,6 +187,36 @@ class PaperTradingEngine:
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat()
         })
         await ws_manager.broadcast("PORTFOLIO_UPDATE", summary)
+
+        # Dispatch Telegram notification in background
+        if side == "BUY":
+            asyncio.create_task(
+                telegram_notifier.send_buy_alert(
+                    symbol=symbol,
+                    qty=qty,
+                    price=fill_price,
+                    total_cost=total_order_cost,
+                    reason=reason,
+                    catalyst=catalyst,
+                    stop_loss=stop_loss_val,
+                    take_profit=take_profit_val,
+                    total_equity=summary["total_equity"],
+                    cash=summary["cash"]
+                )
+            )
+        elif side == "SELL":
+            asyncio.create_task(
+                telegram_notifier.send_sell_alert(
+                    symbol=symbol,
+                    qty=qty,
+                    exit_price=fill_price,
+                    entry_price=entry_price_val or fill_price,
+                    realized_pnl=realized_pnl_val,
+                    pnl_pct=pnl_pct_val,
+                    reason=reason,
+                    total_equity=summary["total_equity"]
+                )
+            )
 
         return {
             "success": True,

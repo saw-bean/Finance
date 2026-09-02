@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Key, ShieldCheck, Cpu, Bell, CheckCircle2 } from 'lucide-react';
+import { X, Save, Key, ShieldCheck, Cpu, Bell, CheckCircle2, Send, AlertCircle } from 'lucide-react';
 
 export default function SettingsModal({ isOpen, onClose }) {
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [telegramStatus, setTelegramStatus] = useState(null);
+  
   const [form, setForm] = useState({
     sec_user_agent: '',
     alpaca_api_key: '',
@@ -21,6 +24,7 @@ export default function SettingsModal({ isOpen, onClose }) {
   useEffect(() => {
     if (isOpen) {
       fetchSettings();
+      setTelegramStatus(null);
     }
   }, [isOpen]);
 
@@ -33,6 +37,7 @@ export default function SettingsModal({ isOpen, onClose }) {
           ...prev,
           sec_user_agent: data.SEC_USER_AGENT || '',
           ollama_base_url: data.OLLAMA_BASE_URL || 'http://localhost:11434',
+          telegram_chat_id: data.TELEGRAM_CHAT_ID || '',
           max_position_size_pct: data.MAX_POSITION_SIZE_PCT || 0.10,
           default_stop_loss_pct: data.DEFAULT_STOP_LOSS_PCT || 0.05,
           default_take_profit_pct: data.DEFAULT_TAKE_PROFIT_PCT || 0.15
@@ -55,10 +60,28 @@ export default function SettingsModal({ isOpen, onClose }) {
       });
       if (res.ok) {
         setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        setTimeout(() => setSaved(false), 2500);
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    setTestingTelegram(true);
+    setTelegramStatus(null);
+    try {
+      const res = await fetch('/api/telegram/test', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setTelegramStatus({ success: true, message: data.message || 'Telegram test message delivered!' });
+      } else {
+        setTelegramStatus({ success: false, message: data.detail || 'Failed to send Telegram alert.' });
+      }
+    } catch (err) {
+      setTelegramStatus({ success: false, message: err.message });
+    } finally {
+      setTestingTelegram(false);
     }
   };
 
@@ -73,10 +96,10 @@ export default function SettingsModal({ isOpen, onClose }) {
           <div>
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
               <Key className="w-5 h-5 text-emerald-400" />
-              Configuration & API Settings (.env)
+              Settings & Telegram Push Notifications
             </h3>
             <p className="text-xs text-slate-400">
-              Configure free public feeds, paper broker integration, and optional alert webhooks.
+              Configure automated Telegram trade alerts, free public feeds, and risk rules.
             </p>
           </div>
           <button
@@ -96,11 +119,68 @@ export default function SettingsModal({ isOpen, onClose }) {
 
         <form onSubmit={handleSave} className="space-y-6 mt-5 text-xs">
           
+          {/* Telegram Alerts Box */}
+          <div className="space-y-3 p-4 rounded-xl bg-slate-950/90 border border-indigo-900/60 shadow-sm">
+            <div className="flex items-center justify-between">
+              <label className="font-mono text-slate-200 font-bold flex items-center gap-1.5 text-xs">
+                <Bell className="w-4 h-4 text-indigo-400" />
+                Telegram Instant Trade & Reflection Alerts
+              </label>
+              
+              <button
+                type="button"
+                onClick={handleTestTelegram}
+                disabled={testingTelegram}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-700 text-[11px] font-bold transition disabled:opacity-50"
+              >
+                <Send className={`w-3 h-3 ${testingTelegram ? 'animate-pulse' : ''}`} />
+                <span>{testingTelegram ? 'Sending...' : 'Test Telegram Alert'}</span>
+              </button>
+            </div>
+
+            {telegramStatus && (
+              <div className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                telegramStatus.success
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                  : 'bg-rose-950 text-rose-300 border border-rose-800'
+              }`}>
+                {telegramStatus.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                <span>{telegramStatus.message}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <span className="text-[11px] text-slate-400 block mb-1">Telegram Bot Token (from @BotFather)</span>
+                <input
+                  type="password"
+                  value={form.telegram_bot_token}
+                  onChange={(e) => setForm({ ...form, telegram_bot_token: e.target.value })}
+                  placeholder="e.g. 7123456789:AAH..."
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-400 block mb-1">Telegram Chat ID (from @userinfobot)</span>
+                <input
+                  type="text"
+                  value={form.telegram_chat_id}
+                  onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })}
+                  placeholder="e.g. 123456789"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Every single <strong>BUY</strong>, <strong>SELL</strong> (stop-loss / take-profit), and <strong>Autonomous Self-Upgrade</strong> will be pushed instantly to your phone.
+            </p>
+          </div>
+
           {/* SEC EDGAR */}
-          <div className="space-y-2">
+          <div className="space-y-2 pt-2">
             <label className="block font-mono text-slate-200 font-bold flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-cyan-400" />
-              SEC EDGAR User-Agent (100% Free - Standard Format: Name email@domain.com)
+              SEC EDGAR User-Agent (Standard Format: Name email@domain.com)
             </label>
             <input
               type="text"
@@ -115,7 +195,7 @@ export default function SettingsModal({ isOpen, onClose }) {
           {/* Alpaca Paper Trading */}
           <div className="space-y-3 pt-3 border-t border-slate-800">
             <label className="block font-mono text-slate-200 font-bold flex items-center gap-1.5">
-              <Cpu className="w-4 h-4 text-indigo-400" />
+              <Cpu className="w-4 h-4 text-emerald-400" />
               Optional Alpaca Paper Broker Integration (Free at app.alpaca.markets)
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -136,46 +216,6 @@ export default function SettingsModal({ isOpen, onClose }) {
                   value={form.alpaca_secret_key}
                   onChange={(e) => setForm({ ...form, alpaca_secret_key: e.target.value })}
                   placeholder="Secret..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Webhooks & Alerts */}
-          <div className="space-y-3 pt-3 border-t border-slate-800">
-            <label className="block font-mono text-slate-200 font-bold flex items-center gap-1.5">
-              <Bell className="w-4 h-4 text-amber-400" />
-              Optional Mobile Real-Time Push Alerts (Discord / Telegram)
-            </label>
-            <div>
-              <span className="text-[11px] text-slate-400 block mb-1">Discord Webhook URL</span>
-              <input
-                type="text"
-                value={form.discord_webhook_url}
-                onChange={(e) => setForm({ ...form, discord_webhook_url: e.target.value })}
-                placeholder="https://discord.com/api/webhooks/..."
-                className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <span className="text-[11px] text-slate-400 block mb-1">Telegram Bot Token</span>
-                <input
-                  type="password"
-                  value={form.telegram_bot_token}
-                  onChange={(e) => setForm({ ...form, telegram_bot_token: e.target.value })}
-                  placeholder="bot123456:ABC..."
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-400 block mb-1">Telegram Chat ID</span>
-                <input
-                  type="text"
-                  value={form.telegram_chat_id}
-                  onChange={(e) => setForm({ ...form, telegram_chat_id: e.target.value })}
-                  placeholder="12345678"
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-100 font-mono focus:outline-none focus:border-emerald-500"
                 />
               </div>

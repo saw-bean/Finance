@@ -19,6 +19,9 @@ from backend.agents.contract_catalyst import contract_agent
 from backend.agents.flow_gamma import flow_agent
 from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
+from backend.agents.web_intel_agent import web_intel_agent
+from backend.agents.evolution_agent import evolution_agent
+from backend.notifications.telegram import telegram_notifier
 from backend.config import settings, BASE_DIR
 
 router = APIRouter(prefix="/api")
@@ -99,8 +102,28 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         ],
         "total_signals_detected": total_signals,
         "total_trades_executed": total_trades,
+        "telegram_configured": telegram_notifier.is_configured,
         "audit_log_file": settings.LOG_FILE_PATH
     }
+
+@router.post("/telegram/test")
+async def test_telegram_notification():
+    """Sends a live test notification to Telegram."""
+    if not telegram_notifier.is_configured:
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram Bot Token or Chat ID not configured. Please set them in the Settings Modal or .env file."
+        )
+    success = await telegram_notifier.send_message(
+        "🤖 <b>ALPHAFORGE TELEGRAM ALERTS ACTIVE!</b>\n\n"
+        "• 🚀 <b>BUY Alerts:</b> Quantity, price, catalyst & stop-loss / profit targets\n"
+        "• ⚠️ <b>SELL Alerts:</b> Realized PnL ($ and %) & post-mortem lessons\n"
+        "• 🛠️ <b>Self-Evolution Alerts:</b> Autonomous system tool upgrades\n\n"
+        "<i>Your Telegram trading alert channel is connected and ready.</i>"
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to deliver Telegram test message. Check bot token and chat ID.")
+    return {"success": True, "message": "Test notification sent successfully to Telegram!"}
 
 @router.get("/learning/performance")
 async def get_learning_performance(db: AsyncSession = Depends(get_db)):
@@ -384,20 +407,15 @@ async def get_agents(db: AsyncSession = Depends(get_db)):
 
 @router.post("/agents/{agent_name}/trigger")
 async def trigger_agent(agent_name: str):
-    from backend.agents.sec_edgar import sec_agent
-    from backend.agents.forensic_quant import forensic_agent
-    from backend.agents.contract_catalyst import contract_agent
-    from backend.agents.flow_gamma import flow_agent
-    from backend.agents.cio_risk import cio_agent
-    from backend.agents.learning_agent import learning_agent
-    
     agent_map = {
         "sec_edgar_agent": sec_agent,
         "forensic_quant_agent": forensic_agent,
         "contract_catalyst_agent": contract_agent,
         "flow_gamma_agent": flow_agent,
         "cio_risk_agent": cio_agent,
-        "learning_agent": learning_agent
+        "learning_agent": learning_agent,
+        "web_intel_agent": web_intel_agent,
+        "evolution_agent": evolution_agent
     }
     
     target = agent_map.get(agent_name)
@@ -425,7 +443,6 @@ async def get_agent_logs(limit: int = Query(100, ge=1, le=500), db: AsyncSession
 
 @router.get("/logs/audit")
 async def get_raw_audit_logs(lines: int = Query(200, ge=1, le=2000)):
-    """Returns the persistent raw system audit log lines from disk."""
     log_file = settings.LOG_FILE_PATH
     if not os.path.exists(log_file):
         return {"logs": [], "total_lines": 0, "file_path": log_file}
@@ -443,7 +460,6 @@ async def get_raw_audit_logs(lines: int = Query(200, ge=1, le=2000)):
 
 @router.get("/logs/download")
 async def download_audit_logs():
-    """Allows direct download of the full raw audit log file."""
     log_file = settings.LOG_FILE_PATH
     if not os.path.exists(log_file):
         raise HTTPException(status_code=404, detail="Log file not found")
@@ -458,7 +474,8 @@ async def get_settings():
         "GEMINI_CONFIGURED": bool(settings.GEMINI_API_KEY),
         "OLLAMA_BASE_URL": settings.OLLAMA_BASE_URL,
         "DISCORD_CONFIGURED": bool(settings.DISCORD_WEBHOOK_URL),
-        "TELEGRAM_CONFIGURED": bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID),
+        "TELEGRAM_CONFIGURED": telegram_notifier.is_configured,
+        "TELEGRAM_CHAT_ID": settings.TELEGRAM_CHAT_ID,
         "PAPER_INITIAL_CASH": settings.PAPER_INITIAL_CASH,
         "MAX_POSITION_SIZE_PCT": settings.MAX_POSITION_SIZE_PCT,
         "DEFAULT_STOP_LOSS_PCT": settings.DEFAULT_STOP_LOSS_PCT,
