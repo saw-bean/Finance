@@ -23,6 +23,7 @@ from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
 from backend.agents.evolution_agent import evolution_agent
 from backend.execution.paper_engine import paper_engine
+from backend.notifications.telegram import telegram_notifier
 
 # Ensure data directory exists
 os.makedirs(os.path.dirname(settings.LOG_FILE_PATH), exist_ok=True)
@@ -60,7 +61,7 @@ async def lifespan(app: FastAPI):
     
     is_testing = os.environ.get("TESTING") == "true"
     if not is_testing:
-        logger.info("Launching autonomous 8-agent swarm with Live Web Intel & Self-Evolution...")
+        logger.info("Launching autonomous 8-agent swarm with Telegram interactive command bot...")
         await sec_agent.start()
         await forensic_agent.start()
         await contract_agent.start()
@@ -69,12 +70,13 @@ async def lifespan(app: FastAPI):
         await cio_agent.start()
         await learning_agent.start()
         await evolution_agent.start()
-        logger.info("AlphaForge Swarm is active, self-improving, and recording all actions.")
+        await telegram_notifier.start_polling()
+        logger.info("AlphaForge Swarm is active, listening for Telegram commands, and self-improving.")
         
     yield
     
     if not is_testing:
-        logger.info("Shutting down agent swarm...")
+        logger.info("Shutting down agent swarm and Telegram listener...")
         await sec_agent.stop()
         await forensic_agent.stop()
         await contract_agent.stop()
@@ -83,6 +85,7 @@ async def lifespan(app: FastAPI):
         await cio_agent.stop()
         await learning_agent.stop()
         await evolution_agent.stop()
+        await telegram_notifier.stop_polling()
         logger.info("All agents stopped safely.")
 
 app = FastAPI(
