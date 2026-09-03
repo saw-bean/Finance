@@ -119,63 +119,76 @@ class TelegramNotifier:
             await asyncio.sleep(1)
 
     async def _handle_conversational_message(self, user_msg: str, chat_id: str):
-        """Processes plain English questions like 'what trades am i taking right now'."""
+        """Processes any flexible plain English phrasing."""
         msg = user_msg.lower().strip()
 
-        # 1. "What trades am I taking right now?" / "What are my current holdings?"
-        if any(k in msg for k in ["what trade", "taking right now", "current trade", "open position", "holdings", "what do i hold", "what am i holding", "/portfolio", "/positions"]):
+        # 1. Holdings / Active trades (Super Flexible)
+        holdings_keywords = [
+            "trade", "trades", "taking right now", "right now", "holding", "holdings",
+            "open", "position", "positions", "portfolio", "my stocks", "stocks",
+            "what do i hold", "what am i in", "what are we in", "what we have",
+            "/portfolio", "/positions"
+        ]
+        if any(k in msg for k in holdings_keywords) and not any(w in msg for w in ["history", "recent", "past", "why"]):
             await self._reply_current_holdings(chat_id)
+            return
 
-        # 2. "What is my balance / profit / PnL / how much money do I have?"
-        elif any(k in msg for k in ["balance", "how much money", "how much do i have", "equity", "pnl", "p/l", "profit", "status", "/status", "/pnl", "/account"]):
+        # 2. Balance / Money / Profit / PnL (Super Flexible)
+        money_keywords = [
+            "balance", "money", "cash", "worth", "equity", "pnl", "p/l", "profit",
+            "loss", "how much", "how much money", "how much do i have", "status",
+            "account", "/status", "/pnl", "/account"
+        ]
+        if any(k in msg for k in money_keywords):
             await self._reply_balance_status(chat_id)
+            return
 
-        # 3. "What did we buy / recent trades / history?"
-        elif any(k in msg for k in ["recent trade", "what did we buy", "trade history", "last trade", "executed", "/trades", "/history"]):
+        # 3. Trade history / recent executions
+        history_keywords = [
+            "history", "recent", "past", "what did we buy", "last trade", "last trades",
+            "executed", "bought recently", "/trades", "/history"
+        ]
+        if any(k in msg for k in history_keywords):
             await self._reply_recent_trades(chat_id)
+            return
 
-        # 4. "Why did we buy <ticker>?"
-        elif "why" in msg and any(c.isupper() for c in user_msg):
-            ticker_match = re.search(r'\b([A-Z]{1,5})\b', user_msg)
+        # 4. "Why <ticker>" or "Why did we buy <ticker>"
+        if "why" in msg:
+            ticker_match = re.search(r'\b([a-zA-Z]{1,5})\b', user_msg.replace("why", "").replace("did", "").replace("we", "").replace("buy", ""))
             if ticker_match:
                 await self._reply_why_bought(ticker_match.group(1).upper(), chat_id)
-            else:
-                await self._reply_current_holdings(chat_id)
+                return
 
-        # 5. "Scan / check <ticker>" or "What do you think of NVDA?"
-        elif any(k in msg for k in ["scan", "check", "analyze", "think of", "opinions on", "/scan"]):
-            ticker_match = re.search(r'\b([A-Z]{1,5})\b', user_msg) or re.search(r'\b([a-zA-Z]{1,5})\b', user_msg.split()[-1])
-            if ticker_match:
-                await self._reply_scan_ticker(ticker_match.group(1).upper(), chat_id)
-            else:
-                await self.send_message("Please name the ticker you want me to analyze (e.g. <i>'check PLTR'</i> or <i>'scan NVDA'</i>).", chat_id=chat_id)
+        # 5. Scan / Analysis on specific ticker (e.g. "scan NVDA", "check AAPL", "TSLA")
+        scan_triggers = ["scan", "check", "analyze", "look at", "think of", "opinion", "/scan"]
+        if any(k in msg for k in scan_triggers) or (len(user_msg.split()) == 1 and len(user_msg) <= 5 and user_msg.isalpha()):
+            words = [w.strip("$.,!?") for w in user_msg.split() if w.strip("$.,!?").isalpha() and len(w.strip("$.,!?")) <= 5]
+            target_ticker = words[-1].upper() if words else "PLTR"
+            if target_ticker.lower() not in ["hi", "hey", "help", "scan", "check"]:
+                await self._reply_scan_ticker(target_ticker, chat_id)
+                return
 
-        # 6. "How are the agents doing / win rates / learning?"
-        elif any(k in msg for k in ["learning", "win rate", "strategies", "agents", "accuracy", "/learning"]):
+        # 6. Win rates / Learning
+        if any(k in msg for k in ["learning", "win rate", "winrate", "accuracy", "strategies", "weights", "/learning"]):
             await self._reply_learning_winrates(chat_id)
+            return
 
-        # 7. Greetings / General Help
-        elif any(k in msg for k in ["hi", "hello", "hey", "help", "/help", "/start"]):
+        # 7. Greetings / Default
+        if any(k in msg for k in ["hi", "hello", "hey", "help", "menu", "/help", "/start"]):
             text = (
-                "👋 <b>AlphaForge AI Assistant</b>\n\n"
-                "You can chat with me naturally in plain English! Ask me things like:\n\n"
-                "• <i>'What trades am I taking right now?'</i>\n"
-                "• <i>'How much money do I have?'</i>\n"
-                "• <i>'What did we buy recently?'</i>\n"
-                "• <i>'Check NVDA'</i> or <i>'Scan PLTR'</i>\n"
-                "• <i>'How are our win rates?'</i>"
+                "👋 <b>AlphaForge Assistant</b>\n\n"
+                "Just ask me anything in your own words:\n\n"
+                "• <i>'trades'</i> or <i>'what are my current holdings?'</i>\n"
+                "• <i>'money'</i> or <i>'how much do I have?'</i>\n"
+                "• <i>'recent trades'</i>\n"
+                "• <i>'check NVDA'</i> or just <i>'TSLA'</i>\n"
+                "• <i>'why PLTR'</i>"
             )
             await self.send_message(text, chat_id=chat_id)
+            return
 
-        # 8. Fallback friendly response
-        else:
-            await self.send_message(
-                f"I checked your account. You can ask me:\n"
-                f"• <i>'What trades am I taking right now?'</i>\n"
-                f"• <i>'What is my profit/loss?'</i>\n"
-                f"• <i>'Scan &lt;ticker&gt;'</i>",
-                chat_id=chat_id
-            )
+        # 8. Friendly Fallback
+        await self._reply_current_holdings(chat_id)
 
     # -------------------------------------------------------------------------
     # Concise Conversational Responses
@@ -186,7 +199,7 @@ class TelegramNotifier:
             positions = pos_res.scalars().all()
 
         if not positions:
-            await self.send_message("💼 You have <b>no open positions</b> right now. Your $100.00 cash is liquid awaiting catalysts.", chat_id=chat_id)
+            await self.send_message("💼 You have <b>no open positions</b> right now. Cash is 100% liquid ($100.00).", chat_id=chat_id)
             return
 
         lines = [f"💼 <b>You have {len(positions)} active positions right now:</b>\n"]
@@ -195,7 +208,7 @@ class TelegramNotifier:
             lines.append(
                 f"• <b>${p.symbol}</b>: {p.qty:.3f} shs (${p.market_value:.2f}) | P/L: <b>{pnl_sign}${p.unrealized_pnl:.2f} ({pnl_sign}{p.unrealized_pnl_pct:.1f}%)</b>"
             )
-        lines.append(f"\n<i>Automated stop-losses (-5%) and profit targets (+15%) are armed on all of them.</i>")
+        lines.append(f"\n<i>All protected with -5% stop-loss & +15% target profit.</i>")
         await self.send_message("\n".join(lines), chat_id=chat_id)
 
     async def _reply_balance_status(self, chat_id: str):
@@ -205,11 +218,11 @@ class TelegramNotifier:
         emoji = "🟢" if acc["total_pnl"] >= 0 else "🔴"
 
         text = (
-            f"💰 <b>Your Account Overview:</b>\n\n"
-            f"• <b>Total Equity:</b> <code>${acc['total_equity']:.2f}</code>\n"
-            f"• <b>Net Return:</b> {emoji} <code>{pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)</code>\n"
-            f"• <b>Invested:</b> ${acc['positions_value']:.2f} ({acc['open_positions_count']} stocks)\n"
-            f"• <b>Available Cash:</b> ${acc['cash']:.2f}"
+            f"💰 <b>Your Balance:</b>\n\n"
+            f"• <b>Total Value:</b> <code>${acc['total_equity']:.2f}</code>\n"
+            f"• <b>Profit/Loss:</b> {emoji} <code>{pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)</code>\n"
+            f"• <b>Invested in Stocks:</b> ${acc['positions_value']:.2f} ({acc['open_positions_count']} positions)\n"
+            f"• <b>Cash Buffer:</b> ${acc['cash']:.2f}"
         )
         await self.send_message(text, chat_id=chat_id)
 
@@ -236,14 +249,14 @@ class TelegramNotifier:
             pos = pos_res.scalars().first()
 
         if not pos:
-            await self.send_message(f"We don't currently hold <b>${ticker}</b>.", chat_id=chat_id)
+            await self.send_message(f"We don't hold <b>${ticker}</b> right now.", chat_id=chat_id)
             return
 
         cat = pos.catalyst or "High-Conviction Quant Screen"
         text = (
             f"💡 <b>Why we bought ${ticker}:</b>\n\n"
             f"• <b>Strategy:</b> {cat.replace('_', ' ').title()}\n"
-            f"• <b>Bought at:</b> ${pos.avg_entry_price:.2f} (Current: ${pos.current_price:.2f})\n"
+            f"• <b>Bought at:</b> ${pos.avg_entry_price:.2f} (Live: ${pos.current_price:.2f})\n"
             f"• <b>Stop-Loss:</b> ${pos.stop_loss:.2f} | <b>Target:</b> ${pos.take_profit:.2f}"
         )
         await self.send_message(text, chat_id=chat_id)
@@ -254,8 +267,8 @@ class TelegramNotifier:
         verdict = "🟢 SAFE / BUY" if "BUY" in rec else ("🔴 HIGH RISK" if "AVOID" in rec or "SHORT" in rec else "🟡 NEUTRAL")
 
         text = (
-            f"🔍 <b>${ticker} Analysis:</b> {verdict}\n\n"
-            f"• <b>Piotroski Score:</b> {data.get('piotroski_f_score', 7)}/9 ({data.get('earnings_quality', 'Normal')} Quality)\n"
+            f"🔍 <b>${ticker} Scan:</b> {verdict}\n\n"
+            f"• <b>Piotroski Score:</b> {data.get('piotroski_f_score', 7)}/9\n"
             f"• <b>Altman Zone:</b> {data.get('altman_zone', 'Safe')}\n"
             f"• <b>Price:</b> ${data.get('current_price', 0):.2f}"
         )
