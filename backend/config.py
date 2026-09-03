@@ -32,10 +32,10 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "deepseek-r1:latest"
     
-    # Webhook Alerts
+    # Webhook Alerts & Telegram Push (Embedded Cloud Defaults)
     DISCORD_WEBHOOK_URL: Optional[str] = None
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
-    TELEGRAM_CHAT_ID: Optional[str] = None
+    TELEGRAM_BOT_TOKEN: Optional[str] = "8705428209:AAGs4TszbtcNNXfeYOgYkGiLVbm-DNE8ljw"
+    TELEGRAM_CHAT_ID: Optional[str] = "8572984163"
     
     # Risk & Portfolio Parameters
     PAPER_INITIAL_CASH: float = 100.0

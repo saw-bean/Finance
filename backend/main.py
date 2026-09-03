@@ -72,6 +72,15 @@ async def lifespan(app: FastAPI):
         await evolution_agent.start()
         await telegram_notifier.start_polling()
         logger.info("AlphaForge Swarm is active, listening for Telegram commands, and self-improving.")
+        if telegram_notifier.is_configured:
+            asyncio.create_task(telegram_notifier.send_message(
+                "🚀 <b>ALPHAFORGE CLOUD MULTI-AGENT SWARM ACTIVE</b>\n\n"
+                "• <b>Status:</b> Online & Trading 24/7 on Cloud\n"
+                "• <b>Swarm:</b> 8 Autonomous Agents Active\n"
+                "• <b>Capital:</b> $100.00\n"
+                "• <b>Alerts:</b> Telegram Push Enabled\n\n"
+                "<i>Send /status or /portfolio anytime to check account metrics.</i>"
+            ))
         
     yield
     
