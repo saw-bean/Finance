@@ -1,0 +1,15 @@
+name: 24/7 Cloud Swarm Keep-Alive
+
+on:
+  schedule:
+    # Ping every 10 minutes to prevent Render free instance from sleeping
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive-ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Cloud Swarm API
+        run: |
+          curl -s -f https://finance-3bsm.onrender.com/api/status || echo "Ping completed"

@@ -7,20 +7,31 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from backend.config import settings
 from backend.db.models import Base, AgentState, AccountBalance, CatalystPerformance
 
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+connect_args = {}
+if "sqlite" in db_url:
+    connect_args = {"timeout": 60.0}
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=False,
     future=True,
-    connect_args={"timeout": 60.0}
+    connect_args=connect_args
 )
 
-@event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=60000")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
+if "sqlite" in db_url:
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 async_session_factory = async_sessionmaker(
     engine,
@@ -36,7 +47,7 @@ async def get_db():
             await session.close()
 
 async def commit_with_retry(session: AsyncSession, max_retries: int = 5, base_delay: float = 0.1):
-    """Commits a session with automatic retry backoff if SQLite is momentarily busy."""
+    """Commits a session with automatic retry backoff."""
     for attempt in range(max_retries):
         try:
             await session.commit()
