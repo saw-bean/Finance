@@ -38,9 +38,9 @@ def _get_live_price_sync(ticker: str) -> float:
 
 class CioRiskAgent(BaseAgent):
     """
-    Institutional Chief Investment Officer (CIO) & Risk Management Agent.
-    Enforces selective entry analysis, asymmetric upside verification, 
-    dollar-cost-averaged pacing cooldowns, and capital preservation.
+    Sniper CIO & Devil's Advocate Risk Management Agent.
+    Waits patiently for clear catalyst indications and asymmetric upside potential.
+    Executes instantly without artificial time limitations when a high-conviction setup is verified.
     """
     def __init__(self):
         super().__init__(
@@ -48,21 +48,18 @@ class CioRiskAgent(BaseAgent):
             display_name="CIO & Devil's Advocate Risk Agent",
             interval_seconds=30
         )
-        self.startup_time = datetime.datetime.now(datetime.UTC)
-        self.last_buy_time = None
-        self.pacing_cooldown_seconds = 300 # 5-minute pacing between BUY orders
-        self.warmup_seconds = 60 # 60-second warmup on reboot to cross-check signals
+        self.min_confidence_bar = 0.78 # High-quality clear indication threshold
 
     async def run_iteration(self):
-        await self.log("INFO", "Running CIO consensus, risk sizing & position monitoring cycle...")
+        await self.log("INFO", "Evaluating market signals for clear catalyst indications & asymmetric upside...")
         
-        # 1. Update mark-to-market prices for all active open positions
+        # 1. Update mark-to-market prices for active holdings
         await self._update_open_positions_mtm()
         
-        # 2. Process all pending signals with selective entry gates
+        # 2. Evaluate incoming signals for clear entry indication
         await self._process_unhandled_signals()
         
-        # 3. Record portfolio snapshot
+        # 3. Snapshot portfolio equity
         await paper_engine.record_snapshot()
         
         await self.update_status("RUNNING")
@@ -86,9 +83,6 @@ class CioRiskAgent(BaseAgent):
 
     async def _process_unhandled_signals(self):
         now = datetime.datetime.now(datetime.UTC)
-        
-        # Warmup Gate: Allow agents 60s to collect full market context before first buy
-        is_warmup = (now - self.startup_time).total_seconds() < self.warmup_seconds
 
         async with async_session_factory() as session:
             sig_res = await session.execute(
@@ -105,7 +99,7 @@ class CioRiskAgent(BaseAgent):
                 for s in raw_signals
             ]
             
-            # Accounting red flag veto list
+            # Conflict / Red Flag Filter
             conflict_res = await session.execute(
                 select(Signal.ticker).where(
                     Signal.catalyst_type == "ACCOUNTING_RED_FLAG",
@@ -114,7 +108,7 @@ class CioRiskAgent(BaseAgent):
             )
             red_flagged_tickers = set(conflict_res.scalars().all())
 
-            # Catalyst performance weights
+            # Performance weights
             perf_res = await session.execute(select(CatalystPerformance))
             perfs = perf_res.scalars().all()
             weight_map = {p.catalyst_type: p.calibrated_weight for p in perfs}
@@ -127,7 +121,6 @@ class CioRiskAgent(BaseAgent):
             dynamic_weight = weight_map.get(catalyst, 1.0)
             effective_conf = min(0.98, max(0.20, conf * dynamic_weight))
 
-            # Handle SELL exits immediately (always prioritize risk defense)
             if action == "SELL":
                 await self._execute_sell_signal(ticker, title)
             elif action == "BUY":
@@ -142,12 +135,9 @@ class CioRiskAgent(BaseAgent):
                     "dynamic_weight": dynamic_weight
                 })
 
-        # Process BUY candidates with Selective Entry Analysis
+        # Process clear indication buy setups
         if buy_candidates:
-            if is_warmup:
-                await self.log("INFO", "Warm-up phase active (60s). Collecting and ranking signals before deploying capital...")
-            else:
-                await self._evaluate_and_execute_best_buy(buy_candidates, red_flagged_tickers)
+            await self._evaluate_and_execute_clear_indications(buy_candidates, red_flagged_tickers)
 
         # Mark processed signals
         if processed_ids:
@@ -157,35 +147,27 @@ class CioRiskAgent(BaseAgent):
                 )
                 await commit_with_retry(session)
 
-    async def _evaluate_and_execute_best_buy(self, candidates: list, red_flags: set):
-        now = datetime.datetime.now(datetime.UTC)
-
-        # 1. Check Pacing Cooldown (Prevents rapid-fire cold-start dump)
-        if self.last_buy_time:
-            elapsed = (now - self.last_buy_time).total_seconds()
-            if elapsed < self.pacing_cooldown_seconds:
-                remaining_wait = int(self.pacing_cooldown_seconds - elapsed)
-                await self.log("INFO", f"Smart Pacing Active: Next high-potential entry window in {remaining_wait}s.")
-                return
-
-        # 2. Strict Entry Analysis: Filter and Rank Candidates by Asymmetric Potential
+    async def _evaluate_and_execute_clear_indications(self, candidates: list, red_flags: set):
+        """Filters setups for clear indications and executes without time limits if verified."""
         viable_entries = []
+
         for c in candidates:
             ticker = c["ticker"]
             
-            # Veto 1: Active accounting fraud or manipulation red flag
+            # Veto 1: Fraud / Accounting Red Flag
             if ticker in red_flags:
-                await self.log("WARNING", f"CIO VETO on ${ticker}: Red flag active. Entry rejected.", ticker=ticker)
+                await self.log("WARNING", f"VETO on ${ticker}: Red flag active. Trade rejected.", ticker=ticker)
                 continue
 
-            # Veto 2: Web Intel Bear Veto (Check live web debate score)
+            # Veto 2: Web Intel Bear Veto
             debate = c["meta"].get("bull_bear_debate", {})
             if debate.get("verdict") == "BEAR_DOMINANT":
-                await self.log("WARNING", f"CIO VETO on ${ticker}: Live web debate flagged bear headwinds. Entry skipped.", ticker=ticker)
+                await self.log("WARNING", f"VETO on ${ticker}: Live web debate flagged risk friction. Entry skipped.", ticker=ticker)
                 continue
 
-            # Veto 3: High Conviction Threshold (Minimum 75% effective confidence)
-            if c["effective_conf"] < 0.75:
+            # Veto 3: Clear Indication Quality Threshold (Minimum 78% conviction)
+            if c["effective_conf"] < self.min_confidence_bar:
+                await self.log("INFO", f"Skipping ${ticker}: Conviction ({c['effective_conf']*100:.0f}%) below clear indication bar ({self.min_confidence_bar*100:.0f}%). Waiting for clearer setup.", ticker=ticker)
                 continue
 
             viable_entries.append(c)
@@ -193,70 +175,66 @@ class CioRiskAgent(BaseAgent):
         if not viable_entries:
             return
 
-        # Sort by highest conviction & catalyst weight to select ONLY the #1 best setup
+        # Rank by conviction score
         viable_entries.sort(key=lambda x: x["effective_conf"] * x["dynamic_weight"], reverse=True)
-        best_candidate = viable_entries[0]
 
-        # Execute the #1 Best Entry
-        ticker = best_candidate["ticker"]
-        effective_conf = best_candidate["effective_conf"]
-        dynamic_weight = best_candidate["dynamic_weight"]
-        title = best_candidate["title"]
-        catalyst = best_candidate["catalyst"]
+        for candidate in viable_entries:
+            ticker = candidate["ticker"]
+            effective_conf = candidate["effective_conf"]
+            dynamic_weight = candidate["dynamic_weight"]
+            title = candidate["title"]
+            catalyst = candidate["catalyst"]
 
-        account = await paper_engine.get_account_summary()
-        total_equity = account["total_equity"]
-        cash = account["cash"]
+            account = await paper_engine.get_account_summary()
+            total_equity = account["total_equity"]
+            cash = account["cash"]
 
-        # Keep minimum 15% cash reserve for dip opportunities
-        available_deployable_cash = max(0.0, cash - (total_equity * 0.15))
-        if available_deployable_cash < 4.0:
-            await self.log("INFO", f"Capital fully utilized (${cash:.2f} cash / 15% reserve maintained). Waiting for exits.")
-            return
+            if cash < 4.0:
+                await self.log("INFO", f"Capital fully deployed ($100 budget active). Cash buffer: ${cash:.2f}. Waiting for exits.")
+                break
 
-        # Check single-stock concentration limit (max 25% of account in any single stock)
-        async with async_session_factory() as session:
-            pos_res = await session.execute(select(Position).where(Position.symbol == ticker))
-            existing_pos = pos_res.scalars().first()
-            current_holding_val = existing_pos.market_value if existing_pos else 0.0
+            # Check single-stock concentration cap (max 25% in one ticker)
+            async with async_session_factory() as session:
+                pos_res = await session.execute(select(Position).where(Position.symbol == ticker))
+                existing_pos = pos_res.scalars().first()
+                current_holding_val = existing_pos.market_value if existing_pos else 0.0
 
-        max_allowed_for_stock = total_equity * 0.25
-        remaining_room = max_allowed_for_stock - current_holding_val
-        if remaining_room <= 2.0:
-            return
+            max_allowed = total_equity * 0.25
+            room = max_allowed - current_holding_val
+            if room <= 2.0:
+                continue
 
-        target_allocation = min(remaining_room, max(5.0, total_equity * settings.MAX_POSITION_SIZE_PCT * effective_conf))
-        order_size_dollars = min(target_allocation, available_deployable_cash)
+            target_allocation = min(room, max(5.0, total_equity * settings.MAX_POSITION_SIZE_PCT * effective_conf))
+            order_size_dollars = min(target_allocation, cash * 0.95)
 
-        if order_size_dollars < 4.0:
-            return
+            if order_size_dollars < 4.0:
+                continue
 
-        curr_price = await asyncio.to_thread(_get_live_price_sync, ticker)
-        if curr_price <= 0:
-            return
+            curr_price = await asyncio.to_thread(_get_live_price_sync, ticker)
+            if curr_price <= 0:
+                continue
 
-        raw_qty = order_size_dollars / curr_price
-        qty = round(raw_qty, 4) if raw_qty < 1 else round(raw_qty, 2)
-        if qty <= 0.0001:
-            return
+            raw_qty = order_size_dollars / curr_price
+            qty = round(raw_qty, 4) if raw_qty < 1 else round(raw_qty, 2)
+            if qty <= 0.0001:
+                continue
 
-        # Execute selective entry
-        trade_result = await paper_engine.execute_order(
-            symbol=ticker,
-            side="BUY",
-            qty=qty,
-            current_price=curr_price,
-            reason=f"High-Potential Entry (Conf: {effective_conf*100:.0f}% | 3:1 Asymmetric R/R)",
-            catalyst=catalyst,
-            stop_loss_pct=settings.DEFAULT_STOP_LOSS_PCT,
-            take_profit_pct=settings.DEFAULT_TAKE_PROFIT_PCT
-        )
+            # Execute without arbitrary time limits on clear indication
+            trade_result = await paper_engine.execute_order(
+                symbol=ticker,
+                side="BUY",
+                qty=qty,
+                current_price=curr_price,
+                reason=f"Clear Indication Entry (Conf: {effective_conf*100:.0f}% | Asymmetric Upside)",
+                catalyst=catalyst,
+                stop_loss_pct=settings.DEFAULT_STOP_LOSS_PCT,
+                take_profit_pct=settings.DEFAULT_TAKE_PROFIT_PCT
+            )
 
-        if trade_result.get("success"):
-            self.last_buy_time = datetime.datetime.now(datetime.UTC)
-            await self.log("ACTION", f"SELECTIVE ENTRY EXECUTED: {qty} shs of ${ticker} @ ${curr_price:.2f} (Upside: +15% / Stop: -5% | R/R: 3:1)", ticker=ticker)
-            if alpaca_client.is_configured():
-                await alpaca_client.submit_order(symbol=ticker, qty=qty, side="buy")
+            if trade_result.get("success"):
+                await self.log("ACTION", f"CLEAR INDICATION ENTRY: Bought {qty} shs of ${ticker} @ ${curr_price:.2f} (Upside +15% / Stop -5%)", ticker=ticker)
+                if alpaca_client.is_configured():
+                    await alpaca_client.submit_order(symbol=ticker, qty=qty, side="buy")
 
     async def _execute_sell_signal(self, ticker: str, title: str):
         async with async_session_factory() as session:
