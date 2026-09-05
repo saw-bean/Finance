@@ -144,19 +144,27 @@ class SecEdgarAgent(BaseAgent):
         
         # Generate Alpha Signal if insider buying is detected
         if is_purchase or "4" in entry["form_type"]:
-            confidence = 0.85 if "officer" in summary.lower() or "director" in summary.lower() or "chief" in summary.lower() else 0.72
+            confidence = 0.85 if "officer" in summary.lower() or "director" in summary.lower() or "chief" in summary.lower() else 0.75
+            
+            # Detect Pre-Market / Overnight timing (4 PM - 9:30 AM ET)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            is_premarket = now_utc.hour < 13 or (now_utc.hour == 13 and now_utc.minute < 30) or now_utc.hour >= 20
+            if is_premarket:
+                confidence = min(0.95, confidence + 0.05)
+
             await self.emit_signal(
                 ticker=ticker,
                 catalyst_type="SEC_FORM4_CLUSTER_BUY",
                 action="BUY",
                 confidence=confidence,
-                title=f"Form 4 Insider Accumulation: {company}",
+                title=f"Form 4 Insider Accumulation: {company}" + (" [Pre-Market Setup]" if is_premarket else ""),
                 summary=f"C-level / Director open-market insider accumulation detected in SEC EDGAR filing. Title: {title}",
                 metadata={
                     "company_name": company,
                     "cik": entry["cik"],
                     "form_type": entry["form_type"],
-                    "filing_url": entry["link"]
+                    "filing_url": entry["link"],
+                    "is_premarket_catalyst": is_premarket
                 }
             )
 

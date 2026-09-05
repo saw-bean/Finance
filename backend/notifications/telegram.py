@@ -12,10 +12,11 @@ from backend.agents.forensic_quant import forensic_agent
 logger = logging.getLogger("alphaforge.telegram")
 
 class TelegramNotifier:
-    """Ultra-concise, non-spammy Telegram assistant for AlphaForge."""
+    """Ultra-concise, non-spammy Telegram assistant and automated market briefer for AlphaForge."""
     
     def __init__(self):
         self._polling_task = None
+        self._briefing_task = None
         self._last_update_id = 0
 
     @property
@@ -60,24 +61,22 @@ class TelegramNotifier:
         await self.send_message(text)
 
     async def send_self_evolution_alert(self, title: str, reason: str, action: str):
-        # Keep Telegram quiet - log internally only
         logger.info(f"Self-evolution upgrade: {title}")
 
     # -------------------------------------------------------------------------
-    # Conversational Listener (Only Speaks When Spoken To)
+    # Conversational Listener & Daily Briefings
     # -------------------------------------------------------------------------
     async def start_polling(self):
-        if self._polling_task and not self._polling_task.done():
-            return
-        self._polling_task = asyncio.create_task(self._poll_updates_loop())
+        if not self._polling_task or self._polling_task.done():
+            self._polling_task = asyncio.create_task(self._poll_updates_loop())
+        if not self._briefing_task or self._briefing_task.done():
+            self._briefing_task = asyncio.create_task(self._daily_briefing_loop())
 
     async def stop_polling(self):
         if self._polling_task:
             self._polling_task.cancel()
-            try:
-                await self._polling_task
-            except asyncio.CancelledError:
-                pass
+        if self._briefing_task:
+            self._briefing_task.cancel()
 
     async def _poll_updates_loop(self):
         while True:
@@ -104,6 +103,68 @@ class TelegramNotifier:
             except Exception:
                 await asyncio.sleep(3)
             await asyncio.sleep(1)
+
+    async def _daily_briefing_loop(self):
+        """Automated 9:00 AM Morning Briefing and 4:15 PM Closing Bell Recap."""
+        last_morning_date = None
+        last_evening_date = None
+
+        while True:
+            try:
+                if not self.is_configured:
+                    await asyncio.sleep(60)
+                    continue
+
+                now_utc = datetime.datetime.now(datetime.timezone.utc)
+                today_str = now_utc.strftime("%Y-%m-%d")
+
+                # Weekdays only (Monday=0 to Friday=4)
+                if now_utc.weekday() < 5:
+                    # 9:00 AM EDT = 13:00 UTC
+                    if now_utc.hour == 13 and now_utc.minute >= 0 and last_morning_date != today_str:
+                        last_morning_date = today_str
+                        await self._send_morning_briefing()
+
+                    # 4:15 PM EDT = 20:15 UTC
+                    if now_utc.hour == 20 and now_utc.minute >= 15 and last_evening_date != today_str:
+                        last_evening_date = today_str
+                        await self._send_closing_recap()
+            except Exception as e:
+                logger.debug(f"Daily briefing exception: {e}")
+            await asyncio.sleep(30)
+
+    async def _send_morning_briefing(self):
+        from backend.execution.paper_engine import paper_engine
+        acc = await paper_engine.get_account_summary()
+        
+        async with async_session_factory() as session:
+            pos_res = await session.execute(select(Position).order_by(desc(Position.market_value)))
+            positions = pos_res.scalars().all()
+
+        pos_str = ", ".join([f"${p.symbol}" for p in positions[:4]]) or "100% Liquid"
+        text = (
+            f"🌅 <b>ALPHAFORGE MORNING BRIEFING (9:00 AM ET)</b>\n\n"
+            f"• <b>Total Equity:</b> ${acc['total_equity']:.2f} (Cash: ${acc['cash']:.2f})\n"
+            f"• <b>Active Holdings ({len(positions)}):</b> {pos_str}\n"
+            f"• <b>Market Status:</b> Sniper Mode & Ratchet Trailing Stops Active\n\n"
+            f"<i>Pre-market catalyst filters armed for 9:30 AM open.</i>"
+        )
+        await self.send_message(text)
+
+    async def _send_closing_recap(self):
+        from backend.execution.paper_engine import paper_engine
+        acc = await paper_engine.get_account_summary()
+        pnl_sign = "+" if acc["total_pnl"] >= 0 else ""
+        emoji = "🟢" if acc["total_pnl"] >= 0 else "🔴"
+
+        text = (
+            f"🔔 <b>ALPHAFORGE CLOSING BELL RECAP (4:15 PM ET)</b>\n\n"
+            f"• <b>Account Value:</b> ${acc['total_equity']:.2f}\n"
+            f"• <b>Total Return:</b> {emoji} {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n"
+            f"• <b>Invested in Market:</b> ${acc['positions_value']:.2f} ({acc['open_positions_count']} positions)\n\n"
+            f"<i>24/7 Swarm continues scanning after-hours Form 4 filings and DoD contracts.</i>"
+        )
+        await self.send_message(text)
 
     async def _handle_conversational_message(self, user_msg: str, chat_id: str):
         msg = user_msg.lower().strip()
@@ -175,21 +236,15 @@ class TelegramNotifier:
 
     async def _reply_balance_status(self, chat_id: str):
         from backend.execution.paper_engine import paper_engine
-        from backend.api.routes import BOOT_TIME
         acc = await paper_engine.get_account_summary()
         pnl_sign = "+" if acc["total_pnl"] >= 0 else ""
-        
-        uptime_sec = int((datetime.datetime.now(datetime.UTC) - BOOT_TIME).total_seconds())
-        h, rem = divmod(uptime_sec, 3600)
-        m, s = divmod(rem, 60)
-        uptime_str = f"{h}h {m}m" if h > 0 else f"{m}m {s}s"
 
         text = (
             f"💰 <b>Balance:</b> ${acc['total_equity']:.2f}\n"
             f"• <b>P/L:</b> {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n"
             f"• <b>Invested:</b> ${acc['positions_value']:.2f}\n"
             f"• <b>Cash:</b> ${acc['cash']:.2f}\n"
-            f"• ⏱️ <b>24/7 Uptime:</b> {uptime_str}"
+            f"• ⏱️ <b>24/7 Autopilot:</b> Active & Monitoring"
         )
         await self.send_message(text, chat_id=chat_id)
 
@@ -218,7 +273,7 @@ class TelegramNotifier:
             return
 
         cat = pos.catalyst.replace("_", " ").title() if pos.catalyst else "Fundamental Screener"
-        text = f"💡 <b>${ticker}:</b> {cat}\n• Entry: ${pos.avg_entry_price:.2f} | Stop: ${pos.stop_loss:.2f} | Target: ${pos.take_profit:.2f}"
+        text = f"💡 <b>${ticker}:</b> {cat}\n• Entry: ${pos.avg_entry_price:.2f} | Stop: ${pos.stop_loss:.2f} | Target: ${pos.take_profit or 'Trailing Runner'}"
         await self.send_message(text, chat_id=chat_id)
 
     async def _reply_scan_ticker(self, ticker: str, chat_id: str):
