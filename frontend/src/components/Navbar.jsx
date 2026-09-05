@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Brain, Activity, Search, Briefcase, Cpu, Settings, TrendingUp } from 'lucide-react';
+import { Home, Brain, Activity, Search, Briefcase, Cpu, Settings, TrendingUp, Clock } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, status, wsConnected, onOpenSettings }) {
   const account = status?.account || {};
@@ -7,6 +7,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
   const totalPnl = account.total_pnl || 0.0;
   const totalPnlPct = account.total_pnl_pct || 0.0;
   const isPositive = totalPnl >= 0;
+  const uptimeText = status?.uptime_human || 'Active';
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Home },
@@ -22,7 +23,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
-          {/* Logo & Status */}
+          {/* Logo & Live Uptime Badge */}
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2.5 cursor-pointer" onClick={() => setActiveTab('overview')}>
               <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 via-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -38,11 +39,16 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
               </div>
             </div>
 
-            {/* Live Indicator */}
-            <div className="hidden sm:flex items-center space-x-2 px-2.5 py-1 rounded-full bg-slate-900/80 border border-slate-800 text-xs">
+            {/* Live 24/7 Uptime Counter */}
+            <div className="hidden sm:flex items-center space-x-2.5 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs shadow-sm">
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-              <span className="font-mono text-[11px] text-slate-300">
-                {wsConnected ? 'LIVE FEED' : 'CONNECTING...'}
+              <span className="font-mono text-[11px] text-slate-300 font-bold">
+                24/7 ONLINE
+              </span>
+              <span className="text-slate-700">|</span>
+              <span className="font-mono text-[11px] text-emerald-300 font-bold flex items-center gap-1.5" title="Continuous system uptime">
+                <Clock className="w-3 h-3 text-emerald-400" />
+                <span>Uptime: {uptimeText}</span>
               </span>
             </div>
           </div>
@@ -101,24 +107,29 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
 
         </div>
 
-        {/* Mobile Navigation Row */}
-        <div className="md:hidden flex overflow-x-auto space-x-1 py-2 border-t border-slate-800">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap font-medium ${
-                  isActive ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' : 'text-slate-400'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
+        {/* Mobile Navigation Row & Uptime */}
+        <div className="md:hidden flex items-center justify-between py-2 border-t border-slate-800 px-1">
+          <div className="flex overflow-x-auto space-x-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap font-medium ${
+                    isActive ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' : 'text-slate-400'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <span className="font-mono text-[10px] text-emerald-300 shrink-0 ml-2">
+            ⏱️ {uptimeText}
+          </span>
         </div>
 
       </div>

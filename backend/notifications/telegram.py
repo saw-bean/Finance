@@ -175,9 +175,22 @@ class TelegramNotifier:
 
     async def _reply_balance_status(self, chat_id: str):
         from backend.execution.paper_engine import paper_engine
+        from backend.api.routes import BOOT_TIME
         acc = await paper_engine.get_account_summary()
         pnl_sign = "+" if acc["total_pnl"] >= 0 else ""
-        text = f"💰 <b>Balance:</b> ${acc['total_equity']:.2f}\n• <b>P/L:</b> {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n• <b>Invested:</b> ${acc['positions_value']:.2f}\n• <b>Cash:</b> ${acc['cash']:.2f}"
+        
+        uptime_sec = int((datetime.datetime.now(datetime.UTC) - BOOT_TIME).total_seconds())
+        h, rem = divmod(uptime_sec, 3600)
+        m, s = divmod(rem, 60)
+        uptime_str = f"{h}h {m}m" if h > 0 else f"{m}m {s}s"
+
+        text = (
+            f"💰 <b>Balance:</b> ${acc['total_equity']:.2f}\n"
+            f"• <b>P/L:</b> {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n"
+            f"• <b>Invested:</b> ${acc['positions_value']:.2f}\n"
+            f"• <b>Cash:</b> ${acc['cash']:.2f}\n"
+            f"• ⏱️ <b>24/7 Uptime:</b> {uptime_str}"
+        )
         await self.send_message(text, chat_id=chat_id)
 
     async def _reply_recent_trades(self, chat_id: str):

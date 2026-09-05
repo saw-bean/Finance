@@ -26,6 +26,9 @@ from backend.config import settings, BASE_DIR
 
 router = APIRouter(prefix="/api")
 
+BOOT_TIME = datetime.datetime.now(datetime.UTC)
+
+
 # Schemas
 class ManualOrderRequest(BaseModel):
     symbol: str
@@ -90,10 +93,26 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
     trade_count_res = await db.execute(select(Trade))
     total_trades = len(trade_count_res.scalars().all())
     
+    now_utc = datetime.datetime.now(datetime.UTC)
+    uptime_seconds = int((now_utc - BOOT_TIME).total_seconds())
+    days, rem = divmod(uptime_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    
+    if days > 0:
+        uptime_human = f"{days}d {hours}h {minutes}m {seconds}s"
+    elif hours > 0:
+        uptime_human = f"{hours}h {minutes}m {seconds}s"
+    else:
+        uptime_human = f"{minutes}m {seconds}s"
+
     return {
         "status": "ONLINE",
         "environment": settings.ENVIRONMENT,
-        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+        "timestamp": now_utc.isoformat(),
+        "boot_time": BOOT_TIME.isoformat(),
+        "uptime_seconds": uptime_seconds,
+        "uptime_human": uptime_human,
         "account": account,
         "active_agents": [
             {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, TrendingUp, TrendingDown, ShieldCheck, AlertCircle, HelpCircle, ArrowUpRight, ArrowDownRight, CheckCircle2, Lock, Sparkles } from 'lucide-react';
+import { DollarSign, TrendingUp, TrendingDown, ShieldCheck, AlertCircle, HelpCircle, ArrowUpRight, ArrowDownRight, CheckCircle2, Lock, Sparkles, Clock, Server } from 'lucide-react';
 
 export default function ExecutiveSummary({ portfolio, status, onClosePosition, onNavigateToTab }) {
   const [holdings, setHoldings] = useState([]);
@@ -13,6 +13,7 @@ export default function ExecutiveSummary({ portfolio, status, onClosePosition, o
   const cash = account.cash || 100.0;
   const investedVal = account.positions_value || 0.0;
   const isPositive = totalPnl >= 0;
+  const uptimeText = status?.uptime_human || 'Active';
 
   useEffect(() => {
     fetchHoldingsSummary();
@@ -36,19 +37,26 @@ export default function ExecutiveSummary({ portfolio, status, onClosePosition, o
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       
-      {/* Welcome Banner */}
+      {/* Welcome & 24/7 Uptime Banner */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/60 p-6 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div>
-            <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 font-bold mb-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              SYSTEM ACTIVE & MONITORING MARKETS
+            <div className="flex items-center gap-3 text-xs font-mono font-bold mb-1">
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                SYSTEM ACTIVE & MONITORING
+              </span>
+              <span className="text-slate-600">|</span>
+              <span className="flex items-center gap-1.5 text-cyan-300">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                Uptime: <strong>{uptimeText}</strong> (24/7 Continuous)
+              </span>
             </div>
             <h1 className="text-2xl font-black text-slate-100 tracking-tight">
               Executive Portfolio Overview
             </h1>
             <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-              Your multi-agent AI system scans official SEC filings, balance sheets, and market flow 24/7 to protect capital and seize asymmetric opportunities.
+              Your 8-agent swarm scans official SEC filings, balance sheets, and market flow 24/7 to protect capital and seize asymmetric opportunities.
             </p>
           </div>
 
