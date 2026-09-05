@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Home, Brain, Activity, Search, Briefcase, Cpu, Settings, TrendingUp, Clock } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, status, wsConnected, onOpenSettings }) {
@@ -7,7 +7,27 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
   const totalPnl = account.total_pnl || 0.0;
   const totalPnlPct = account.total_pnl_pct || 0.0;
   const isPositive = totalPnl >= 0;
-  const uptimeText = status?.uptime_human || 'Active';
+
+  const [liveSeconds, setLiveSeconds] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const getUptimeString = () => {
+    if (status?.uptime_human) {
+      return status.uptime_human;
+    }
+    const s = liveSeconds;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m ${sec}s`;
+    return `${m}m ${sec}s`;
+  };
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Home },
@@ -23,7 +43,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
-          {/* Logo & Live Uptime Badge */}
+          {/* Logo & Live 24/7 Uptime Badge */}
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2.5 cursor-pointer" onClick={() => setActiveTab('overview')}>
               <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 via-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -39,7 +59,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
               </div>
             </div>
 
-            {/* Live 24/7 Uptime Counter */}
+            {/* Live 24/7 Ticking Uptime Counter */}
             <div className="hidden sm:flex items-center space-x-2.5 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs shadow-sm">
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
               <span className="font-mono text-[11px] text-slate-300 font-bold">
@@ -47,8 +67,8 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
               </span>
               <span className="text-slate-700">|</span>
               <span className="font-mono text-[11px] text-emerald-300 font-bold flex items-center gap-1.5" title="Continuous system uptime">
-                <Clock className="w-3 h-3 text-emerald-400" />
-                <span>Uptime: {uptimeText}</span>
+                <Clock className="w-3 h-3 text-emerald-400 animate-spin-slow" />
+                <span>Uptime: {getUptimeString()}</span>
               </span>
             </div>
           </div>
@@ -128,7 +148,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
             })}
           </div>
           <span className="font-mono text-[10px] text-emerald-300 shrink-0 ml-2">
-            ⏱️ {uptimeText}
+            ⏱️ {getUptimeString()}
           </span>
         </div>
 
