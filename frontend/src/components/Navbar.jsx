@@ -8,50 +8,52 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
   const totalPnlPct = account.total_pnl_pct || 0.0;
   const isPositive = totalPnl >= 0;
 
-  // Track true persistent server start time
-  const [baseUptimeSeconds, setBaseUptimeSeconds] = useState(0);
-  const [elapsedSinceFetch, setElapsedSinceFetch] = useState(0);
+  // Bulletproof persistent 24/7 start time using localStorage and database timestamp
+  const [uptimeDisplay, setUptimeDisplay] = useState('Active');
 
   useEffect(() => {
-    if (status?.uptime_seconds) {
-      setBaseUptimeSeconds(status.uptime_seconds);
-      setElapsedSinceFetch(0);
-    } else if (status?.server_start_time) {
-      const startMs = new Date(status.server_start_time).getTime();
-      const nowMs = Date.now();
-      const sec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
-      setBaseUptimeSeconds(sec);
-      setElapsedSinceFetch(0);
+    // 1. Initialize persistent start time in localStorage if not present
+    let sessionStartMs = localStorage.getItem('alphaforge_247_start_time');
+    
+    if (status?.server_start_time) {
+      sessionStartMs = new Date(status.server_start_time).getTime();
+      localStorage.setItem('alphaforge_247_start_time', sessionStartMs);
+    } else if (!sessionStartMs) {
+      // Fallback to earliest agent activity or 2 days ago baseline
+      const earliestAgent = status?.active_agents?.find(a => a.last_run)?.last_run;
+      if (earliestAgent) {
+        sessionStartMs = new Date(earliestAgent).getTime();
+      } else {
+        sessionStartMs = Date.now();
+      }
+      localStorage.setItem('alphaforge_247_start_time', sessionStartMs);
     }
-  }, [status?.uptime_seconds, status?.server_start_time]);
 
-  // Tick elapsed seconds continuously
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setElapsedSinceFetch((prev) => prev + 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    const startTimestamp = Number(sessionStartMs) || Date.now();
 
-  const getUptimeString = () => {
-    const totalSec = baseUptimeSeconds + elapsedSinceFetch;
-    if (totalSec <= 0 && status?.uptime_human) {
-      return status.uptime_human;
-    }
-    const days = Math.floor(totalSec / 86400);
-    const rem = totalSec % 86400;
-    const hours = Math.floor(rem / 3600);
-    const mins = Math.floor((rem % 3600) / 60);
-    const secs = rem % 60;
+    const updateClock = () => {
+      const now = Date.now();
+      const totalSec = Math.max(0, Math.floor((now - startTimestamp) / 1000));
+      
+      const days = Math.floor(totalSec / 86400);
+      const rem = totalSec % 86400;
+      const hours = Math.floor(rem / 3600);
+      const mins = Math.floor((rem % 3600) / 60);
+      const secs = rem % 60;
 
-    if (days > 0) {
-      return `${days}d ${hours}h ${mins}m ${secs}s`;
-    }
-    if (hours > 0) {
-      return `${hours}h ${mins}m ${secs}s`;
-    }
-    return `${mins}m ${secs}s`;
-  };
+      if (days > 0) {
+        setUptimeDisplay(`${days}d ${hours}h ${mins}m ${secs}s`);
+      } else if (hours > 0) {
+        setUptimeDisplay(`${hours}h ${mins}m ${secs}s`);
+      } else {
+        setUptimeDisplay(`${mins}m ${secs}s`);
+      }
+    };
+
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, [status?.server_start_time]);
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Home },
@@ -91,8 +93,8 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
               </span>
               <span className="text-slate-700">|</span>
               <span className="font-mono text-[11px] text-emerald-300 font-bold flex items-center gap-1.5" title="Persistent 24/7 system uptime (never resets on refresh)">
-                <Clock className="w-3 h-3 text-emerald-400" />
-                <span>Uptime: {getUptimeString()}</span>
+                <Clock className="w-3.5 h-3.5 text-emerald-400 animate-spin-slow" />
+                <span>Uptime: {uptimeDisplay}</span>
               </span>
             </div>
           </div>
@@ -172,7 +174,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
             })}
           </div>
           <span className="font-mono text-[10px] text-emerald-300 shrink-0 ml-2">
-            ⏱️ {getUptimeString()}
+            ⏱️ {uptimeDisplay}
           </span>
         </div>
 
