@@ -8,25 +8,49 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
   const totalPnlPct = account.total_pnl_pct || 0.0;
   const isPositive = totalPnl >= 0;
 
-  const [liveSeconds, setLiveSeconds] = useState(0);
+  // Track true persistent server start time
+  const [baseUptimeSeconds, setBaseUptimeSeconds] = useState(0);
+  const [elapsedSinceFetch, setElapsedSinceFetch] = useState(0);
 
   useEffect(() => {
+    if (status?.uptime_seconds) {
+      setBaseUptimeSeconds(status.uptime_seconds);
+      setElapsedSinceFetch(0);
+    } else if (status?.server_start_time) {
+      const startMs = new Date(status.server_start_time).getTime();
+      const nowMs = Date.now();
+      const sec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+      setBaseUptimeSeconds(sec);
+      setElapsedSinceFetch(0);
+    }
+  }, [status?.uptime_seconds, status?.server_start_time]);
+
+  // Tick elapsed seconds continuously
+  useEffect(() => {
     const timer = setInterval(() => {
-      setLiveSeconds((prev) => prev + 1);
+      setElapsedSinceFetch((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
   const getUptimeString = () => {
-    if (status?.uptime_human) {
+    const totalSec = baseUptimeSeconds + elapsedSinceFetch;
+    if (totalSec <= 0 && status?.uptime_human) {
       return status.uptime_human;
     }
-    const s = liveSeconds;
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) return `${h}h ${m}m ${sec}s`;
-    return `${m}m ${sec}s`;
+    const days = Math.floor(totalSec / 86400);
+    const rem = totalSec % 86400;
+    const hours = Math.floor(rem / 3600);
+    const mins = Math.floor((rem % 3600) / 60);
+    const secs = rem % 60;
+
+    if (days > 0) {
+      return `${days}d ${hours}h ${mins}m ${secs}s`;
+    }
+    if (hours > 0) {
+      return `${hours}h ${mins}m ${secs}s`;
+    }
+    return `${mins}m ${secs}s`;
   };
 
   const tabs = [
@@ -59,15 +83,15 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
               </div>
             </div>
 
-            {/* Live 24/7 Ticking Uptime Counter */}
+            {/* Live 24/7 Persistent Uptime Counter */}
             <div className="hidden sm:flex items-center space-x-2.5 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs shadow-sm">
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 shadow-sm shadow-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
               <span className="font-mono text-[11px] text-slate-300 font-bold">
                 24/7 ONLINE
               </span>
               <span className="text-slate-700">|</span>
-              <span className="font-mono text-[11px] text-emerald-300 font-bold flex items-center gap-1.5" title="Continuous system uptime">
-                <Clock className="w-3 h-3 text-emerald-400 animate-spin-slow" />
+              <span className="font-mono text-[11px] text-emerald-300 font-bold flex items-center gap-1.5" title="Persistent 24/7 system uptime (never resets on refresh)">
+                <Clock className="w-3 h-3 text-emerald-400" />
                 <span>Uptime: {getUptimeString()}</span>
               </span>
             </div>

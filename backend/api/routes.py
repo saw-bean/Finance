@@ -93,8 +93,19 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
     trade_count_res = await db.execute(select(Trade))
     total_trades = len(trade_count_res.scalars().all())
     
+    # Calculate persistent 24/7 uptime from earliest database record
+    snap_res = await db.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.timestamp.asc()).limit(1))
+    first_snap = snap_res.scalars().first()
+    
     now_utc = datetime.datetime.now(datetime.UTC)
-    uptime_seconds = int((now_utc - BOOT_TIME).total_seconds())
+    if first_snap and first_snap.timestamp:
+        start_dt = first_snap.timestamp
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=datetime.timezone.utc)
+    else:
+        start_dt = BOOT_TIME
+        
+    uptime_seconds = max(0, int((now_utc - start_dt).total_seconds()))
     days, rem = divmod(uptime_seconds, 86400)
     hours, rem = divmod(rem, 3600)
     minutes, seconds = divmod(rem, 60)
@@ -110,7 +121,7 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         "status": "ONLINE",
         "environment": settings.ENVIRONMENT,
         "timestamp": now_utc.isoformat(),
-        "boot_time": BOOT_TIME.isoformat(),
+        "server_start_time": start_dt.isoformat(),
         "uptime_seconds": uptime_seconds,
         "uptime_human": uptime_human,
         "account": account,
