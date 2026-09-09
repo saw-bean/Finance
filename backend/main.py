@@ -13,7 +13,8 @@ from backend.db.session import init_db
 from backend.api.routes import router as api_router
 from backend.api.websocket import ws_manager
 
-# Import Autonomous Swarm Agents
+# Import Autonomous Swarm Agents & Registry
+from backend.agents.registry import agent_registry
 from backend.agents.sec_edgar import sec_agent
 from backend.agents.forensic_quant import forensic_agent
 from backend.agents.contract_catalyst import contract_agent
@@ -22,8 +23,20 @@ from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
 from backend.agents.evolution_agent import evolution_agent
+from backend.agents.boss_agent import boss_agent
 from backend.execution.paper_engine import paper_engine
 from backend.notifications.telegram import telegram_notifier
+
+# Register all core agents in central dynamic registry
+agent_registry.register(sec_agent)
+agent_registry.register(forensic_agent)
+agent_registry.register(contract_agent)
+agent_registry.register(flow_agent)
+agent_registry.register(cio_agent)
+agent_registry.register(learning_agent)
+agent_registry.register(web_intel_agent)
+agent_registry.register(evolution_agent)
+agent_registry.register(boss_agent)
 
 # Ensure data directory exists
 os.makedirs(os.path.dirname(settings.LOG_FILE_PATH), exist_ok=True)
@@ -61,39 +74,25 @@ async def lifespan(app: FastAPI):
     
     is_testing = os.environ.get("TESTING") == "true"
     if not is_testing:
-        logger.info("Launching autonomous 8-agent swarm with Telegram interactive command bot...")
-        await sec_agent.start()
-        await forensic_agent.start()
-        await contract_agent.start()
-        await flow_agent.start()
-        await web_intel_agent.start()
-        await cio_agent.start()
-        await learning_agent.start()
-        await evolution_agent.start()
+        logger.info("Launching autonomous 9-agent swarm with Boss Director & Telegram bot...")
+        await agent_registry.start_all()
         await telegram_notifier.start_polling()
-        logger.info("AlphaForge Swarm is active, listening for Telegram commands, and self-improving.")
+        logger.info("AlphaForge Swarm is active, governed by Boss Architect, listening for Telegram commands.")
         if telegram_notifier.is_configured:
             asyncio.create_task(telegram_notifier.send_message(
-                "🚀 <b>ALPHAFORGE CLOUD MULTI-AGENT SWARM ACTIVE</b>\n\n"
-                "• <b>Status:</b> Online & Trading 24/7 on Cloud\n"
-                "• <b>Swarm:</b> 8 Autonomous Agents Active\n"
+                "🚀 <b>ALPHAFORGE 24/7 MULTI-AGENT SWARM ACTIVE</b>\n\n"
+                "• <b>Status:</b> Online & Trading 24/7\n"
+                "• <b>Swarm:</b> 9 Autonomous Agents (Governed by Boss Director)\n"
                 "• <b>Capital:</b> $100.00\n"
                 "• <b>Alerts:</b> Telegram Push Enabled\n\n"
-                "<i>Send /status or /portfolio anytime to check account metrics.</i>"
+                "<i>Send /boss, /status, or /portfolio anytime.</i>"
             ))
         
     yield
     
     if not is_testing:
         logger.info("Shutting down agent swarm and Telegram listener...")
-        await sec_agent.stop()
-        await forensic_agent.stop()
-        await contract_agent.stop()
-        await flow_agent.stop()
-        await web_intel_agent.stop()
-        await cio_agent.stop()
-        await learning_agent.stop()
-        await evolution_agent.stop()
+        await agent_registry.stop_all()
         await telegram_notifier.stop_polling()
         logger.info("All agents stopped safely.")
 

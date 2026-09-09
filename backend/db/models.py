@@ -127,3 +127,32 @@ class CatalystPerformance(Base):
     avg_return_pct = Column(Float, default=0.0)
     calibrated_weight = Column(Float, default=1.0) # Multiplier: 0.5x to 1.5x
     last_updated = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
+
+class BossDirective(Base):
+    __tablename__ = "boss_directives"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    directive_key = Column(String(64), unique=True, index=True)
+    category = Column(String(32)) # RISK_TUNING, STRATEGY_WEIGHT, AGENT_CONTROL, REGIME_OVERRIDE
+    value = Column(Text) # JSON serialized parameters/values
+    description = Column(String(256))
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC), onupdate=lambda: datetime.datetime.now(datetime.UTC))
+
+class SystemEvolution(Base):
+    __tablename__ = "system_evolutions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC), index=True)
+    action_type = Column(String(64), index=True) # STRATEGY_SYNTHESIS, AGENT_SPAWNED, CODE_DEPLOYED, PARAMETER_TUNING, ARCHITECTURAL_AUDIT
+    title = Column(String(256))
+    description = Column(Text)
+    code_path = Column(String(256), nullable=True)
+    code_content = Column(Text, nullable=True)
+    ast_verified = Column(Boolean, default=True)
+    sandbox_passed = Column(Boolean, default=True)
+    target_agent = Column(String(64), nullable=True)
+    impact_metrics = Column(Text, default="{}") # JSON string of expected or actual metrics
+    status = Column(String(32), default="ACTIVE") # ACTIVE, VERIFIED, PAUSED, DEPRECATED
+

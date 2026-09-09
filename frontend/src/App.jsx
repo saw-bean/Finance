@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import ExecutiveSummary from './components/ExecutiveSummary';
+import BossConsole from './components/BossConsole';
 import AgentBrainLearning from './components/AgentBrainLearning';
 import LiveSignals from './components/LiveSignals';
 import AgentWarRoom from './components/AgentWarRoom';
@@ -186,6 +187,10 @@ export default function App() {
             onClosePosition={handleClosePosition}
             onNavigateToTab={setActiveTab}
           />
+        )}
+
+        {activeTab === 'boss' && (
+          <BossConsole wsConnected={wsConnected} />
         )}
 
         {activeTab === 'learning' && (

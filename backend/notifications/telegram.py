@@ -169,6 +169,16 @@ class TelegramNotifier:
     async def _handle_conversational_message(self, user_msg: str, chat_id: str):
         msg = user_msg.lower().strip()
 
+        # 0. Boss Architect & Fund Director Commands
+        if any(k in msg for k in ["/boss", "boss", "director", "architect", "/audit", "audit", "spawn", "/spawn"]):
+            if "spawn" in msg:
+                words = [w for w in user_msg.replace("/boss", "").replace("boss", "").replace("/spawn", "").replace("spawn", "").strip().split() if w]
+                stype = words[0].upper() if words else "BIOTECH_FDA"
+                await self._reply_boss_spawn(stype, chat_id)
+                return
+            await self._reply_boss_status(chat_id)
+            return
+
         # 1. Holdings / Active trades
         if any(k in msg for k in ["trade", "trades", "taking right now", "right now", "holding", "holdings", "open", "position", "positions", "stocks", "what do i hold", "what am i in", "/portfolio"]):
             await self._reply_current_holdings(chat_id)
@@ -292,5 +302,45 @@ class TelegramNotifier:
         for p in perfs[:3]:
             lines.append(f"• <b>{p.display_name}:</b> {p.win_rate*100:.0f}% ({p.calibrated_weight:.2f}x weight)")
         await self.send_message("\n".join(lines), chat_id=chat_id)
+
+    async def _reply_boss_status(self, chat_id: str):
+        from backend.agents.boss_agent import boss_agent
+        from backend.agents.registry import agent_registry
+        audit = await boss_agent.conduct_system_audit()
+        
+        acc = audit.get("account", {})
+        agents = agent_registry.list_agents()
+        score = audit.get("health_score", 95.0)
+        recs = audit.get("recommendations", [])
+        rec_str = recs[0] if recs else "Swarm operating at peak efficiency."
+        
+        text = (
+            f"👑 <b>CHIEF ARCHITECT & FUND BOSS AUDIT</b>\n\n"
+            f"• <b>Swarm Health Score:</b> <b>{score:.0f}/100</b>\n"
+            f"• <b>Active Swarm Agents:</b> {len(agents)} autonomous agents\n"
+            f"• <b>Account Equity:</b> ${acc.get('total_equity', 100.0):.2f} ({acc.get('open_positions', 0)} open positions)\n"
+            f"• <b>Historical Win Rate:</b> {audit.get('win_rate', 60.0):.0f}%\n"
+            f"• <b>Executive Directive:</b> <i>{rec_str}</i>\n\n"
+            f"<i>Type '/boss spawn BIOTECH_FDA' to autonomously synthesize & hot-deploy new sub-agents.</i>"
+        )
+        await self.send_message(text, chat_id=chat_id)
+
+    async def _reply_boss_spawn(self, strategy_type: str, chat_id: str):
+        from backend.agents.boss_agent import boss_agent
+        await self.send_message(f"🛠️ <b>Boss Synthesizing:</b> Writing, AST-validating, and testing Python code for strategy <code>{strategy_type}</code>...", chat_id=chat_id)
+        
+        success, msg, agent_inst = await boss_agent.synthesize_and_deploy_agent(strategy_type=strategy_type)
+        if success and agent_inst:
+            text = (
+                f"✅ <b>BOSS SUB-AGENT HOT-DEPLOYED!</b>\n\n"
+                f"• <b>Agent Name:</b> {agent_inst.display_name}\n"
+                f"• <b>Strategy:</b> {strategy_type}\n"
+                f"• <b>Status:</b> Live & Running in Swarm (AST Verified)\n"
+                f"• <b>Poll Interval:</b> {agent_inst.interval_seconds}s"
+            )
+        else:
+            text = f"❌ <b>Boss Deployment Error:</b> {msg}"
+            
+        await self.send_message(text, chat_id=chat_id)
 
 telegram_notifier = TelegramNotifier()

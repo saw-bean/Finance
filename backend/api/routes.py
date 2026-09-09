@@ -11,8 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
 from backend.db.session import get_db, async_session_factory, commit_with_retry
-from backend.db.models import Signal, Position, Trade, AgentState, AgentLog, PortfolioSnapshot, AccountBalance, TradeReflection, CatalystPerformance
+from backend.db.models import (
+    Signal, Position, Trade, AgentState, AgentLog, PortfolioSnapshot, 
+    AccountBalance, TradeReflection, CatalystPerformance, BossDirective, SystemEvolution
+)
 from backend.execution.paper_engine import paper_engine
+from backend.agents.registry import agent_registry
 from backend.agents.sec_edgar import sec_agent
 from backend.agents.forensic_quant import forensic_agent
 from backend.agents.contract_catalyst import contract_agent
@@ -21,6 +25,7 @@ from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
 from backend.agents.evolution_agent import evolution_agent
+from backend.agents.boss_agent import boss_agent
 from backend.notifications.telegram import telegram_notifier
 from backend.config import settings, BASE_DIR
 
@@ -559,3 +564,91 @@ async def update_settings(req: SettingsUpdateRequest):
             f.write(f"{k}={v}\n")
             
     return {"success": True, "message": "Settings updated"}
+
+# ------------------------------------------------------------------------------
+# BOSS ARCHITECT & FUND DIRECTOR ENDPOINTS
+# ------------------------------------------------------------------------------
+
+class BossSpawnRequest(BaseModel):
+    strategy_type: str
+    custom_params: Optional[Dict[str, Any]] = None
+
+class BossTuneRequest(BaseModel):
+    directive_key: str
+    value: Any
+    description: str
+
+@router.get("/boss/audit")
+async def get_boss_audit():
+    """Returns real-time fund health scorecard, metrics, and recommendations from Boss."""
+    audit = await boss_agent.conduct_system_audit()
+    return audit
+
+@router.get("/boss/evolutions")
+async def get_boss_evolutions(db: AsyncSession = Depends(get_db)):
+    """Returns historical list of self-coded features, generated strategies, and deployments."""
+    res = await db.execute(
+        select(SystemEvolution)
+        .order_by(desc(SystemEvolution.timestamp))
+        .limit(50)
+    )
+    evolutions = res.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            "action_type": e.action_type,
+            "title": e.title,
+            "description": e.description,
+            "code_path": e.code_path,
+            "code_content": e.code_content,
+            "ast_verified": e.ast_verified,
+            "sandbox_passed": e.sandbox_passed,
+            "target_agent": e.target_agent,
+            "status": e.status,
+            "impact_metrics": json.loads(e.impact_metrics or "{}")
+        }
+        for e in evolutions
+    ]
+
+@router.get("/boss/directives")
+async def get_boss_directives(db: AsyncSession = Depends(get_db)):
+    """Returns active directives and parameter overrides set by the Boss."""
+    res = await db.execute(select(BossDirective).where(BossDirective.active == True))
+    directives = res.scalars().all()
+    return [
+        {
+            "id": d.id,
+            "directive_key": d.directive_key,
+            "category": d.category,
+            "value": json.loads(d.value or "{}"),
+            "description": d.description,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+            "updated_at": d.updated_at.isoformat() if d.updated_at else None
+        }
+        for d in directives
+    ]
+
+@router.post("/boss/spawn")
+async def spawn_boss_strategy(req: BossSpawnRequest):
+    """Instructs the Boss to synthesize, AST-validate, test, and dynamically spawn a new strategy agent."""
+    success, msg, agent_inst = await boss_agent.synthesize_and_deploy_agent(
+        strategy_type=req.strategy_type,
+        custom_params=req.custom_params
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+        
+    return {
+        "success": True,
+        "message": msg,
+        "agent_name": agent_inst.name if agent_inst else None,
+        "display_name": agent_inst.display_name if agent_inst else None
+    }
+
+@router.post("/boss/tune")
+async def tune_boss_directive(req: BossTuneRequest):
+    """Sets or overrides a Boss directive."""
+    await boss_agent._set_directive(req.directive_key, req.value, req.description)
+    return {"success": True, "message": f"Directive {req.directive_key} updated"}
+
