@@ -36,8 +36,36 @@ class AgentRegistry:
         """Returns a list of all currently registered agents."""
         return list(self._agents.values())
 
+    async def load_custom_agents(self):
+        """Discovers and instantiates any custom agent .py files in backend/agents/custom/ on startup."""
+        custom_dir = Path(__file__).resolve().parent / "custom"
+        if not custom_dir.exists():
+            return
+            
+        for file_path in custom_dir.glob("*.py"):
+            if file_path.name.startswith("__"):
+                continue
+            try:
+                module_name = f"backend.agents.custom.{file_path.stem}"
+                spec = importlib.util.spec_from_file_location(module_name, str(file_path))
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
+                    
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if isinstance(attr, type) and issubclass(attr, BaseAgent) and attr is not BaseAgent:
+                            inst = attr()
+                            if inst.name not in self._agents:
+                                self.register(inst)
+                                logger.info(f"Auto-loaded custom agent on startup: {inst.name} ({inst.display_name})")
+            except Exception as e:
+                logger.error(f"Error auto-loading custom agent from {file_path.name}: {e}")
+
     async def start_all(self):
-        """Starts background execution loops for all registered agents."""
+        """Loads all custom agents and starts background execution loops for all registered agents."""
+        await self.load_custom_agents()
         self._is_running = True
         logger.info(f"Starting all {len(self._agents)} swarm agents...")
         for name, agent in self._agents.items():
