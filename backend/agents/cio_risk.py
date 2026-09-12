@@ -20,21 +20,30 @@ def _get_live_price_sync(ticker: str) -> float:
         stock = yf.Ticker(ticker)
         if hasattr(stock, 'fast_info') and stock.fast_info:
             p = stock.fast_info.get('last_price') or stock.fast_info.get('previous_close')
-            if p and p > 0:
+            if p and float(p) > 0:
                 return float(p)
         info = stock.info or {}
         p = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose") or 0.0
-        if p > 0:
+        if p and float(p) > 0:
             return float(p)
     except Exception:
         pass
 
-    fallback_prices = {
-        "PLTR": 180.50, "SOUN": 4.85, "HIMS": 28.50, "SMCI": 36.80, "BBAI": 2.95,
-        "ASTS": 56.00, "RKLB": 24.10, "IONQ": 31.20, "JOBY": 8.40, "ACHR": 6.70,
-        "AAPL": 235.00, "NVDA": 128.00, "TSLA": 215.00, "MSFT": 448.00, "AMZN": 188.00
-    }
-    return float(fallback_prices.get(ticker, 25.0))
+    # Backup Direct REST Quote
+    try:
+        import urllib.request
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode())
+            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+            p = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
+            if p and float(p) > 0:
+                return float(p)
+    except Exception:
+        pass
+
+    return 0.0
 
 class CioRiskAgent(BaseAgent):
     """

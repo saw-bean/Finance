@@ -240,37 +240,44 @@ class PaperTradingEngine:
 
                 for p in positions:
                     curr_price = price_map.get(p.symbol)
-                    if curr_price and curr_price > 0:
-                        p.current_price = curr_price
-                        p.market_value = round(p.qty * curr_price, 2)
-                        p.unrealized_pnl = round(p.market_value - (p.qty * p.avg_entry_price), 2)
-                        p.unrealized_pnl_pct = round((p.unrealized_pnl / (p.qty * p.avg_entry_price)) * 100, 2)
-                        p.updated_at = datetime.datetime.now(datetime.UTC)
+                    if not curr_price or curr_price <= 0:
+                        continue
 
-                        # Dynamic Ratchet Trailing Stop-Loss & Profit Runner
-                        gain_pct = p.unrealized_pnl_pct
-                        
-                        # Tier 1: At +8% gain, move stop-loss to Breakeven (+1.0%) to lock in zero risk
-                        if gain_pct >= 8.0:
-                            breakeven_stop = round(p.avg_entry_price * 1.01, 2)
-                            if not p.stop_loss or p.stop_loss < breakeven_stop:
-                                p.stop_loss = breakeven_stop
-                                logger.info(f"RATCHET STOP: Raised stop-loss on {p.symbol} to Breakeven (${breakeven_stop:.2f}) at +{gain_pct:.1f}% gain.")
+                    # Circuit Breaker: Prevent bad data feeds from falsely dropping price by >45% in one tick
+                    if p.current_price > 0 and (curr_price < p.current_price * 0.45 or curr_price > p.current_price * 2.5):
+                        logger.warning(f"CIRCUIT BREAKER: Suspect price anomaly for {p.symbol}: ${curr_price:.2f} vs previous ${p.current_price:.2f}. Skipping update.")
+                        continue
 
-                        # Tier 2: At >= +15% gain, enable Trailing Profit Runner mode (trail 5% below peak)
-                        # Lets multi-bagger runners run to +30%, +50%, +100%+ while protecting profits!
-                        if gain_pct >= 15.0:
-                            trailing_stop = round(curr_price * 0.95, 2)
-                            if not p.stop_loss or p.stop_loss < trailing_stop:
-                                p.stop_loss = trailing_stop
-                                logger.info(f"PROFIT RUNNER: Trailing stop on {p.symbol} raised to ${trailing_stop:.2f} (trailing peak at +{gain_pct:.1f}% gain).")
-                            p.take_profit = None
+                    p.current_price = curr_price
+                    p.market_value = round(p.qty * curr_price, 2)
+                    p.unrealized_pnl = round(p.market_value - (p.qty * p.avg_entry_price), 2)
+                    p.unrealized_pnl_pct = round((p.unrealized_pnl / (p.qty * p.avg_entry_price)) * 100, 2)
+                    p.updated_at = datetime.datetime.now(datetime.UTC)
 
-                        # Check stop-loss exit trigger
-                        if p.stop_loss and curr_price <= p.stop_loss:
-                            triggered_exits.append((p.symbol, p.qty, curr_price, f"TRAILING_STOP triggered at ${curr_price:.2f} (Stop: ${p.stop_loss:.2f})"))
-                        elif p.take_profit and curr_price >= p.take_profit:
-                            triggered_exits.append((p.symbol, p.qty, curr_price, f"TAKE_PROFIT reached at ${curr_price:.2f} (Target: ${p.take_profit:.2f})"))
+                    # Dynamic Ratchet Trailing Stop-Loss & Profit Runner
+                    gain_pct = p.unrealized_pnl_pct
+                    
+                    # Tier 1: At +8% gain, move stop-loss to Breakeven (+1.0%) to lock in zero risk
+                    if gain_pct >= 8.0:
+                        breakeven_stop = round(p.avg_entry_price * 1.01, 2)
+                        if not p.stop_loss or p.stop_loss < breakeven_stop:
+                            p.stop_loss = breakeven_stop
+                            logger.info(f"RATCHET STOP: Raised stop-loss on {p.symbol} to Breakeven (${breakeven_stop:.2f}) at +{gain_pct:.1f}% gain.")
+
+                    # Tier 2: At >= +15% gain, enable Trailing Profit Runner mode (trail 5% below peak)
+                    # Lets multi-bagger runners run to +30%, +50%, +100%+ while protecting profits!
+                    if gain_pct >= 15.0:
+                        trailing_stop = round(curr_price * 0.95, 2)
+                        if not p.stop_loss or p.stop_loss < trailing_stop:
+                            p.stop_loss = trailing_stop
+                            logger.info(f"PROFIT RUNNER: Trailing stop on {p.symbol} raised to ${trailing_stop:.2f} (trailing peak at +{gain_pct:.1f}% gain).")
+                        p.take_profit = None
+
+                    # Check stop-loss exit trigger
+                    if p.stop_loss and curr_price <= p.stop_loss:
+                        triggered_exits.append((p.symbol, p.qty, curr_price, f"TRAILING_STOP triggered at ${curr_price:.2f} (Stop: ${p.stop_loss:.2f})"))
+                    elif p.take_profit and curr_price >= p.take_profit:
+                        triggered_exits.append((p.symbol, p.qty, curr_price, f"TAKE_PROFIT reached at ${curr_price:.2f} (Target: ${p.take_profit:.2f})"))
 
                 await commit_with_retry(session)
 
