@@ -652,3 +652,13 @@ async def tune_boss_directive(req: BossTuneRequest):
     await boss_agent._set_directive(req.directive_key, req.value, req.description)
     return {"success": True, "message": f"Directive {req.directive_key} updated"}
 
+@router.post("/system/restart")
+async def restart_system():
+    """Triggers an immediate clean exit so the background supervisor auto-restarts with updated code."""
+    async def _do_restart():
+        await asyncio.sleep(0.5)
+        os._exit(0)
+    asyncio.create_task(_do_restart())
+    return {"success": True, "message": "System restart initiated. Supervisor will reload in 3 seconds."}
+
+
