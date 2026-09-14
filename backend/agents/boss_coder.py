@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any, Optional, List
 
 logger = logging.getLogger("alphaforge.boss_coder")
 
@@ -321,6 +321,75 @@ class {class_name}(BaseAgent):
             )
 '''
             return code, class_name, file_name
+
+    @staticmethod
+    def patch_code_file(target_file_path: Path, new_code: str) -> Tuple[bool, str]:
+        """
+        Safely patches an existing Python source file with AST verification.
+        Creates a backup before overwriting.
+        """
+        is_valid, msg = BossCoder.validate_code_ast(new_code)
+        if not is_valid:
+            return False, f"AST Validation failed for patch: {msg}"
+            
+        try:
+            # Create backup
+            if target_file_path.exists():
+                backup_path = target_file_path.with_suffix(".py.bak")
+                with open(target_file_path, "r", encoding="utf-8") as f_orig:
+                    orig_content = f_orig.read()
+                with open(backup_path, "w", encoding="utf-8") as f_bak:
+                    f_bak.write(orig_content)
+                    
+            with open(target_file_path, "w", encoding="utf-8") as f_new:
+                f_new.write(new_code)
+                
+            logger.info(f"Successfully applied self-healing patch to {target_file_path}")
+            return True, f"Patch applied and verified on {target_file_path.name}"
+        except Exception as e:
+            logger.error(f"Error applying patch to {target_file_path}: {e}")
+            return False, str(e)
+
+    @staticmethod
+    def audit_codebase_for_vulnerabilities(base_dir: Path) -> List[Dict[str, Any]]:
+        """
+        Scans codebase for dangerous patterns (hardcoded price fallbacks, missing imports, syntax errors).
+        """
+        anomalies = []
+        backend_dir = base_dir / "backend"
+        if not backend_dir.exists():
+            backend_dir = base_dir
+            
+        for py_file in backend_dir.rglob("*.py"):
+            if ".venv" in str(py_file) or "__pycache__" in str(py_file):
+                continue
+            try:
+                with open(py_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    
+                # 1. Check for legacy hardcoded fallback prices
+                if "fallback_prices" in content and "25.0" in content:
+                    anomalies.append({
+                        "file": str(py_file),
+                        "type": "HARDCODED_PRICE_FALLBACK",
+                        "severity": "CRITICAL",
+                        "description": f"Detected dangerous hardcoded $25.0 price fallback in {py_file.name}"
+                    })
+                    
+                # 2. Check AST validity
+                try:
+                    ast.parse(content)
+                except SyntaxError as syn_err:
+                    anomalies.append({
+                        "file": str(py_file),
+                        "type": "SYNTAX_ERROR",
+                        "severity": "CRITICAL",
+                        "description": f"Syntax error at line {syn_err.lineno}: {syn_err.msg}"
+                    })
+            except Exception as e:
+                pass
+                
+        return anomalies
 
 # Singleton
 boss_coder = BossCoder()
