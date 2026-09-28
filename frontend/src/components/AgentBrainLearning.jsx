@@ -42,14 +42,14 @@ export default function AgentBrainLearning() {
                 How Your AI Learns & Self-Improves
               </h2>
               <p className="text-xs text-slate-300 mt-0.5 max-w-2xl leading-relaxed">
-                The AI analyzes every trade outcome, measures which catalysts win the most, automatically allocates more capital to winning strategies, and builds new tools to fix weaknesses.
+                Every closed trade is recorded with its catalyst. Catalysts with a better track record get larger position sizes; weak ones get smaller.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 self-start md:self-auto">
             <span className="px-3 py-1.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs font-mono font-bold flex items-center gap-1.5 shadow-sm">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Autonomous Learning: Active
+              Learning from closed trades
             </span>
           </div>
         </div>
@@ -59,8 +59,8 @@ export default function AgentBrainLearning() {
           <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 flex items-start gap-2.5">
             <span className="w-5 h-5 rounded-full bg-indigo-900 text-indigo-300 font-bold flex items-center justify-center shrink-0 text-[11px]">1</span>
             <div>
-              <strong className="text-slate-200 block mb-0.5">Executes With $100 Budget</strong>
-              <span className="text-slate-400 text-[11px]">Tests catalysts in small fractional sizes ($5–$15) with strict 5% stop-loss safety.</span>
+              <strong className="text-slate-200 block mb-0.5">Trades Small Paper Positions</strong>
+              <span className="text-slate-400 text-[11px]">Each entry is capped by max position size and has a stop-loss and take-profit.</span>
             </div>
           </div>
 
@@ -68,102 +68,17 @@ export default function AgentBrainLearning() {
             <span className="w-5 h-5 rounded-full bg-indigo-900 text-indigo-300 font-bold flex items-center justify-center shrink-0 text-[11px]">2</span>
             <div>
               <strong className="text-slate-200 block mb-0.5">Reflects on Every Trade</strong>
-              <span className="text-slate-400 text-[11px]">Calculates empirical win-rate percentages and saves plain-English lessons learned.</span>
+              <span className="text-slate-400 text-[11px]">Records entry, exit, P/L and exit reason for every closed trade.</span>
             </div>
           </div>
 
           <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 flex items-start gap-2.5">
             <span className="w-5 h-5 rounded-full bg-indigo-900 text-indigo-300 font-bold flex items-center justify-center shrink-0 text-[11px]">3</span>
             <div>
-              <strong className="text-slate-200 block mb-0.5">Sizes Up Winners & Builds Tools</strong>
-              <span className="text-slate-400 text-[11px]">Grants up to 1.50x conviction to winning setups and autonomously creates new filters.</span>
+              <strong className="text-slate-200 block mb-0.5">Adjusts Sizing by Track Record</strong>
+              <span className="text-slate-400 text-[11px]">Weights range 0.50x–1.50x from a smoothed win rate per catalyst.</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Section 1: New Tools Built by the AI */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <Zap className="w-5 h-5 text-amber-400" />
-              New Skills & Tools Built by the AI (Zero Permission Needed)
-            </h3>
-            <p className="text-xs text-slate-400">
-              When the AI detects missing data or lower precision, it autonomously designs and activates new micro-tools into the swarm.
-            </p>
-          </div>
-          <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 font-mono text-[11px] font-bold">
-            3 Active Upgrades
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-          
-          <div className="bg-slate-950 border border-indigo-900/50 rounded-xl p-4 flex flex-col justify-between space-y-3">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-mono font-bold">
-                  LIVE WEB INTEL
-                </span>
-                <Globe className="w-4 h-4 text-emerald-400" />
-              </div>
-              <h4 className="text-sm font-bold text-slate-100 mt-2">
-                Bull vs. Bear Web Debate
-              </h4>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                Auto-scrapes live Google News and checks for breaking contracts, lawsuits, or dilution before approving a trade.
-              </p>
-            </div>
-            <div className="text-[11px] font-mono text-emerald-400 pt-2 border-t border-slate-800/80 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Edge: +30% Signal Precision</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 border border-indigo-900/50 rounded-xl p-4 flex flex-col justify-between space-y-3">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] font-mono font-bold">
-                  FUNDAMENTAL FILTER
-                </span>
-                <Cpu className="w-4 h-4 text-cyan-400" />
-              </div>
-              <h4 className="text-sm font-bold text-slate-100 mt-2">
-                EPS Surprise Acceleration
-              </h4>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                Verifies positive quarterly earnings revisions to confirm companies have genuine revenue growth before entry.
-              </p>
-            </div>
-            <div className="text-[11px] font-mono text-cyan-400 pt-2 border-t border-slate-800/80 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Edge: Filters False Squeezes</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 border border-indigo-900/50 rounded-xl p-4 flex flex-col justify-between space-y-3">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 text-[10px] font-mono font-bold">
-                  FLOW ANALYZER
-                </span>
-                <TrendingUp className="w-4 h-4 text-amber-400" />
-              </div>
-              <h4 className="text-sm font-bold text-slate-100 mt-2">
-                Options Flow & Gamma Skew
-              </h4>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                Cross-checks institutional call buying pressure to detect sudden upward short-squeeze momentum early.
-              </p>
-            </div>
-            <div className="text-[11px] font-mono text-amber-400 pt-2 border-t border-slate-800/80 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Edge: Early Momentum Detection</span>
-            </div>
-          </div>
-
         </div>
       </div>
 
@@ -183,7 +98,7 @@ export default function AgentBrainLearning() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
           {performances.map((perf) => {
-            const winPct = perf.win_rate_pct || 50.0;
+            const winPct = perf.win_rate_pct;
             const weight = perf.calibrated_weight || 1.0;
             const isHighEdge = weight >= 1.1;
 
@@ -216,14 +131,14 @@ export default function AgentBrainLearning() {
                   <div className="mt-3 space-y-1.5">
                     <div className="flex justify-between text-xs font-mono">
                       <span className="text-slate-400">Measured Win Rate:</span>
-                      <span className="font-bold text-slate-100">{winPct.toFixed(1)}%</span>
+                      <span className="font-bold text-slate-100">{winPct == null ? 'No closed trades' : `${winPct.toFixed(1)}%`}</span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all duration-500 ${
                           winPct >= 65 ? 'bg-emerald-400' : winPct >= 50 ? 'bg-indigo-400' : 'bg-rose-400'
                         }`}
-                        style={{ width: `${Math.min(100, Math.max(15, winPct))}%` }}
+                        style={{ width: `${winPct == null ? 0 : Math.min(100, Math.max(2, winPct))}%` }}
                       />
                     </div>
                   </div>

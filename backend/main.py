@@ -4,7 +4,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -12,6 +11,7 @@ from backend.config import settings, BASE_DIR
 from backend.db.session import init_db
 from backend.api.routes import router as api_router
 from backend.api.websocket import ws_manager
+from backend.api.auth import router as auth_router, auth_middleware, websocket_authorized
 
 # Import Autonomous Swarm Agents & Registry
 from backend.agents.registry import agent_registry
@@ -22,7 +22,6 @@ from backend.agents.flow_gamma import flow_agent
 from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
-from backend.agents.evolution_agent import evolution_agent
 from backend.agents.boss_agent import boss_agent
 from backend.execution.paper_engine import paper_engine
 from backend.notifications.telegram import telegram_notifier
@@ -35,7 +34,6 @@ agent_registry.register(flow_agent)
 agent_registry.register(cio_agent)
 agent_registry.register(learning_agent)
 agent_registry.register(web_intel_agent)
-agent_registry.register(evolution_agent)
 agent_registry.register(boss_agent)
 
 # Ensure data directory exists
@@ -74,17 +72,16 @@ async def lifespan(app: FastAPI):
     
     is_testing = os.environ.get("TESTING") == "true"
     if not is_testing:
-        logger.info("Launching autonomous 9-agent swarm with Boss Director & Telegram bot...")
+        logger.info("Launching agents and Telegram bot...")
         await agent_registry.start_all()
         await telegram_notifier.start_polling()
-        logger.info("AlphaForge Swarm is active, governed by Boss Architect, listening for Telegram commands.")
+        logger.info("AlphaForge agents running; listening for Telegram commands.")
         if telegram_notifier.is_configured:
+            account = await paper_engine.get_account_summary()
             asyncio.create_task(telegram_notifier.send_message(
-                "🚀 <b>ALPHAFORGE 24/7 MULTI-AGENT SWARM ACTIVE</b>\n\n"
-                "• <b>Status:</b> Online & Trading 24/7\n"
-                "• <b>Swarm:</b> 9 Autonomous Agents (Governed by Boss Director)\n"
-                "• <b>Capital:</b> $100.00\n"
-                "• <b>Alerts:</b> Telegram Push Enabled\n\n"
+                "🚀 <b>ALPHAFORGE ONLINE</b>\n\n"
+                f"• <b>Agents:</b> {len(agent_registry.list_agents())}\n"
+                f"• <b>Equity:</b> ${account['total_equity']:.2f} (paper)\n\n"
                 "<i>Send /boss, /status, or /portfolio anytime.</i>"
             ))
         
@@ -103,18 +100,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The dashboard is served from this same origin, so no cross-origin access is needed.
+app.middleware("http")(auth_middleware)
+app.include_router(auth_router)
 
 # WebSocket live stream endpoint
 @app.websocket("/ws/live")
 async def websocket_live_endpoint(websocket: WebSocket):
+    if not websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:

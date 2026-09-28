@@ -76,67 +76,76 @@ async def init_db():
         default_agents = [
             {
                 "name": "sec_edgar_agent",
-                "display_name": "SEC EDGAR & Footnote Sniper",
-                "description": "Real-time poller for SEC 8-K material events, Form 4 insider cluster purchases, and 13D/G activist stakes.",
+                "display_name": "SEC EDGAR Filings Agent",
+                "description": "Parses live Form 4 XML for insider open-market purchases over $50k, 8-K items (1.01, 4.01, 4.02) and new Schedule 13D stakes.",
             },
             {
                 "name": "forensic_quant_agent",
                 "display_name": "Forensic Quant & Quality Screener",
-                "description": "Calculates Piotroski F-Score, Beneish M-Score, and Altman Z-Score for sub-$2B equities to flag manipulation or deep value.",
+                "description": "Computes Piotroski F-Score, 8-variable Beneish M-Score, Altman Z-Score and Sloan accruals from Yahoo Finance annual statements.",
             },
             {
                 "name": "contract_catalyst_agent",
                 "display_name": "Gov & Defense Contract Catalyst Agent",
-                "description": "Monitors USASpending.gov awards to uncover small-cap defense and tech contract wins before market pricing.",
+                "description": "Polls USASpending.gov for new federal awards over $10M to a watchlist of listed contractors (awards from the last 7 days only).",
             },
             {
                 "name": "flow_gamma_agent",
-                "display_name": "Flow, FINRA Short & Squeeze Tracker",
-                "description": "Monitors FINRA daily short volumes and CBOE put/call flow to pinpoint asymmetric short squeeze setups.",
+                "display_name": "Short Interest Squeeze Tracker",
+                "description": "Flags watchlist stocks with short interest over 15% of float or days-to-cover above 4.5 (Yahoo Finance data).",
             },
             {
                 "name": "cio_risk_agent",
                 "display_name": "CIO & Devil's Advocate Risk Agent",
-                "description": "Cross-validates multi-agent signals, calculates fractional Kelly sizing, runs stop-loss monitoring, and executes paper orders.",
+                "description": "During market hours: vetoes red-flagged tickers, sizes positions by confidence and catalyst record, runs stops and fills paper orders.",
             },
             {
                 "name": "learning_agent",
                 "display_name": "Autonomous Learning & Reflection Engine",
-                "description": "Analyzes closed trades, calculates Bayesian win rates per catalyst, and dynamically recalibrates AI conviction weights.",
+                "description": "Records every closed trade by catalyst and turns each catalyst's smoothed win rate into a 0.5x-1.5x sizing weight.",
             },
             {
                 "name": "web_intel_agent",
-                "display_name": "Live Web Intel & Bull/Bear Debate Agent",
-                "description": "Performs live web research and structured Bull vs. Bear debate synthesis on all incoming candidates.",
+                "display_name": "Headline Sentiment Check",
+                "description": "Pulls Google News headlines for each new signal and nudges its confidence up or down on bullish/bearish keywords.",
             },
             {
-                "name": "evolution_agent",
-                "display_name": "Autonomous Self-Evolution & Tool Builder",
-                "description": "Audits swarm accuracy gaps, automatically invents and builds new specialized tools, and notifies the user.",
-            }
+                "name": "boss_agent",
+                "display_name": "Fund Auditor",
+                "description": "Reports account, win rate, catalyst record and agent errors from the database every minute. Changes nothing.",
+            },
         ]
-        
+        known_names = {d["name"] for d in default_agents}
+
+        # Remove status rows for agents that no longer exist (e.g. retired generated agents)
+        stale = (await session.execute(select(AgentState).where(AgentState.name.not_in(known_names)))).scalars().all()
+        for row in stale:
+            await session.delete(row)
+
         for agent_def in default_agents:
             res = await session.execute(select(AgentState).where(AgentState.name == agent_def["name"]))
             existing = res.scalars().first()
-            if not existing:
-                agent_state = AgentState(
+            if existing:
+                existing.display_name = agent_def["display_name"]
+                existing.description = agent_def["description"]
+            else:
+                session.add(AgentState(
                     name=agent_def["name"],
                     display_name=agent_def["display_name"],
                     description=agent_def["description"],
                     status="IDLE",
                     signals_generated=0,
                     errors_count=0,
-                    stats=json.dumps({"uptime": 0, "last_action": "Initialized"})
-                )
-                session.add(agent_state)
-                
+                    stats=json.dumps({})
+                ))
+
         # Seed Catalyst Performance Tracking
         default_catalysts = [
             ("SEC_FORM4_CLUSTER_BUY", "SEC Form 4 Insider Buys"),
-            ("FORENSIC_HIGH_QUALITY", "Forensic Quality Screener (Piotroski 8-9)"),
+            ("ACTIVIST_STAKE_13D", "Schedule 13D Activist Stakes"),
+            ("FORENSIC_HIGH_QUALITY", "Forensic Quality Screen (F>=7, Z>2.99, M<-1.78)"),
             ("GOV_CONTRACT_AWARD", "Federal & Defense Contract Wins"),
-            ("SHORT_SQUEEZE_SETUP", "FINRA Short Squeeze Setups"),
+            ("SHORT_SQUEEZE_SETUP", "Short Interest Squeeze Setups"),
             ("ACCOUNTING_RED_FLAG", "Accounting Red Flags / Shorts"),
             ("MANUAL_EXECUTION", "Manual Execution / Discretionary")
         ]

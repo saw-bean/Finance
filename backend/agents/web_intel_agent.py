@@ -1,4 +1,5 @@
 import asyncio
+import re
 import datetime
 import json
 import logging
@@ -22,7 +23,7 @@ class WebIntelDebateAgent(BaseAgent):
     def __init__(self):
         super().__init__(
             name="web_intel_agent",
-            display_name="Live Web Intel & Bull/Bear Debate Agent",
+            display_name="Headline Sentiment Check",
             interval_seconds=60
         )
         self.analyzed_signals = set()
@@ -113,13 +114,6 @@ class WebIntelDebateAgent(BaseAgent):
         except Exception as e:
             logger.debug(f"Web news fetch error for {ticker}: {e}")
 
-        # Fallback simulated contextual headlines if network throttles
-        if not headlines:
-            headlines.append({
-                "title": f"${ticker} reports operational expansion and institutional filings.",
-                "date": "Recent",
-                "link": ""
-            })
         return headlines
 
     def _synthesize_bull_bear(self, ticker: str, catalyst: str, news: list) -> dict:
@@ -131,18 +125,29 @@ class WebIntelDebateAgent(BaseAgent):
         bull_keywords = ["contract", "growth", "expansion", "profit", "beats", "wins", "partnership", "buy", "upgrade", "patent", "approval", "record", "surges", "positive"]
         bear_keywords = ["lawsuit", "investigation", "probe", "downgrade", "losses", "fraud", "sec", "dilution", "warning", "drop", "resigns", "cut", "debt", "subpoena"]
 
+        if not news:
+            return {
+                "verdict": "NO_DATA",
+                "bull_score": 0,
+                "bear_score": 0,
+                "bull_summary": "",
+                "bear_summary": "",
+                "verdict_summary": "No headlines could be fetched; confidence left unchanged."
+            }
+
         combined_text = " ".join([h.get("title", "").lower() for h in news])
+        # Whole-word matching so e.g. "sec" doesn't hit "second" and "cut" doesn't hit "execute"
+        has = lambda w: re.search(rf"\b{re.escape(w)}\b", combined_text) is not None
+        bull_matches = [w for w in bull_keywords if has(w)]
+        bear_matches = [w for w in bear_keywords if has(w)]
 
-        bull_matches = [w for w in bull_keywords if w in combined_text]
-        bear_matches = [w for w in bear_keywords if w in combined_text]
-
-        # Catalyst prior weights
+        # The signal's own catalyst counts as one supporting point
         if "FORM4" in catalyst:
-            bull_points.append("Direct insider personal capital accumulation verified.")
+            bull_points.append("Insider open-market purchase in SEC Form 4.")
         if "FORENSIC" in catalyst:
-            bull_points.append("Piotroski balance sheet health (8-9/9) & positive cash generation confirmed.")
+            bull_points.append("Passed the forensic quality screen.")
         if "CONTRACT" in catalyst:
-            bull_points.append("Federal / enterprise contract catalyst detected.")
+            bull_points.append("Federal contract award on USASpending.gov.")
 
         if bull_matches:
             bull_points.append(f"Web sentiment confirmed positive drivers: {', '.join(bull_matches[:4])}.")
@@ -168,7 +173,7 @@ class WebIntelDebateAgent(BaseAgent):
             "bull_score": bull_score,
             "bear_score": bear_score,
             "bull_summary": " | ".join(bull_points),
-            "bear_summary": " | ".join(bear_points) if bear_points else "No active litigation or red flags detected on live web.",
+            "bear_summary": " | ".join(bear_points) if bear_points else "No risk keywords in the fetched headlines.",
             "verdict_summary": summary
         }
 

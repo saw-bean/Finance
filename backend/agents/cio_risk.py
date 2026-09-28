@@ -3,47 +3,32 @@ import json
 import logging
 import asyncio
 import httpx
-import yfinance as yf
+from zoneinfo import ZoneInfo
 from sqlalchemy import select, update
 from backend.agents.base import BaseAgent
 from backend.db.session import async_session_factory, commit_with_retry
 from backend.db.models import Signal, Position, AccountBalance, CatalystPerformance
 from backend.execution.paper_engine import paper_engine
 from backend.execution.alpaca_client import alpaca_client
+from backend.agents.forensic_quant import get_live_price
 from backend.config import settings
 
 logger = logging.getLogger("alphaforge.cio_agent")
 
+SIGNAL_MAX_AGE = datetime.timedelta(days=3)
+
+
 def _get_live_price_sync(ticker: str) -> float:
-    ticker = ticker.upper().strip()
-    try:
-        stock = yf.Ticker(ticker)
-        if hasattr(stock, 'fast_info') and stock.fast_info:
-            p = stock.fast_info.get('last_price') or stock.fast_info.get('previous_close')
-            if p and float(p) > 0:
-                return float(p)
-        info = stock.info or {}
-        p = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose") or 0.0
-        if p and float(p) > 0:
-            return float(p)
-    except Exception:
-        pass
+    return get_live_price(ticker)
 
-    # Backup Direct REST Quote
-    try:
-        import urllib.request
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
-            data = json.loads(resp.read().decode())
-            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
-            p = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
-            if p and float(p) > 0:
-                return float(p)
-    except Exception:
-        pass
 
-    return 0.0
+def is_market_open(now: datetime.datetime = None) -> bool:
+    """Regular NYSE session, Mon-Fri 9:30-16:00 New York time (exchange holidays not modelled)."""
+    now = (now or datetime.datetime.now(datetime.UTC)).astimezone(ZoneInfo("America/New_York"))
+    if now.weekday() >= 5:
+        return False
+    return datetime.time(9, 30) <= now.time() < datetime.time(16, 0)
+
 
 class CioRiskAgent(BaseAgent):
     """
@@ -60,13 +45,14 @@ class CioRiskAgent(BaseAgent):
         self.min_confidence_bar = 0.78 # High-quality clear indication threshold
 
     async def run_iteration(self):
-        await self.log("INFO", "Evaluating market signals for clear catalyst indications & asymmetric upside...")
-        
-        # 1. Update mark-to-market prices for active holdings
-        await self._update_open_positions_mtm()
-        
-        # 2. Evaluate incoming signals for clear entry indication
-        await self._process_unhandled_signals()
+        # Paper fills only happen when a real order could fill: during the regular session.
+        # Outside it, signals wait in the queue (up to SIGNAL_MAX_AGE) and positions keep their last price.
+        if is_market_open():
+            await self.log("INFO", "Market open: marking positions to market and evaluating queued signals...")
+            await self._update_open_positions_mtm()
+            await self._process_unhandled_signals()
+        else:
+            await self.log("INFO", "Market closed: no fills until the next regular session. Signals remain queued.")
         
         # 3. Snapshot portfolio equity
         await paper_engine.record_snapshot()
@@ -100,6 +86,19 @@ class CioRiskAgent(BaseAgent):
                 .order_by(Signal.timestamp.asc())
             )
             raw_signals = sig_res.scalars().all()
+            if not raw_signals:
+                return
+
+            # Stale catalysts are expired, not traded
+            expired_ids = []
+            fresh = []
+            for s in raw_signals:
+                ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=datetime.timezone.utc)
+                (expired_ids if now - ts > SIGNAL_MAX_AGE else fresh).append(s)
+            if expired_ids:
+                await session.execute(update(Signal).where(Signal.id.in_([s.id for s in expired_ids])).values(processed=True))
+                await commit_with_retry(session)
+            raw_signals = fresh
             if not raw_signals:
                 return
             
@@ -199,7 +198,7 @@ class CioRiskAgent(BaseAgent):
             cash = account["cash"]
 
             if cash < 4.0:
-                await self.log("INFO", f"Capital fully deployed ($100 budget active). Cash buffer: ${cash:.2f}. Waiting for exits.")
+                await self.log("INFO", f"Capital fully deployed. Cash left: ${cash:.2f}. Waiting for exits.")
                 break
 
             # Check single-stock concentration cap (max 25% in one ticker)
@@ -234,14 +233,15 @@ class CioRiskAgent(BaseAgent):
                 side="BUY",
                 qty=qty,
                 current_price=curr_price,
-                reason=f"Clear Indication Entry (Conf: {effective_conf*100:.0f}% | Asymmetric Upside)",
+                reason=f"{catalyst} entry: {title} (conf {effective_conf*100:.0f}%)",
                 catalyst=catalyst,
                 stop_loss_pct=settings.DEFAULT_STOP_LOSS_PCT,
                 take_profit_pct=settings.DEFAULT_TAKE_PROFIT_PCT
             )
 
             if trade_result.get("success"):
-                await self.log("ACTION", f"CLEAR INDICATION ENTRY: Bought {qty} shs of ${ticker} @ ${curr_price:.2f} (Upside +15% / Stop -5%)", ticker=ticker)
+                await self.log("ACTION", f"ENTRY: Bought {qty} shs of ${ticker} @ ${curr_price:.2f} "
+                                          f"(stop -{settings.DEFAULT_STOP_LOSS_PCT*100:.0f}% / target +{settings.DEFAULT_TAKE_PROFIT_PCT*100:.0f}%)", ticker=ticker)
                 if alpaca_client.is_configured():
                     await alpaca_client.submit_order(symbol=ticker, qty=qty, side="buy")
 
@@ -250,10 +250,12 @@ class CioRiskAgent(BaseAgent):
             pos_res = await session.execute(select(Position).where(Position.symbol == ticker))
             pos = pos_res.scalars().first()
             pos_qty = pos.qty if pos else 0.0
-            pos_price = pos.current_price if pos else 0.0
 
         if pos_qty > 0:
-            curr_price = await asyncio.to_thread(_get_live_price_sync, ticker) or pos_price
+            curr_price = await asyncio.to_thread(_get_live_price_sync, ticker)
+            if curr_price <= 0:
+                await self.log("WARNING", f"SELL signal for {ticker} skipped: no live price. Stop-loss still active.", ticker=ticker)
+                return
             trade_result = await paper_engine.execute_order(
                 symbol=ticker,
                 side="SELL",

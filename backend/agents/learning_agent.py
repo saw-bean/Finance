@@ -1,5 +1,6 @@
 import datetime
 import logging
+import re
 from sqlalchemy import select, desc
 from backend.agents.base import BaseAgent
 from backend.db.session import async_session_factory, commit_with_retry
@@ -55,44 +56,32 @@ class LearningReflectionAgent(BaseAgent):
 
     async def _analyze_and_learn_from_trade(self, session, sell_trade: Trade):
         """Analyzes a closed trade, extracts catalyst, and generates structured reflection."""
-        # Find matching BUY trade to determine entry price and catalyst
+        # The BUY that opened this position: latest BUY of the symbol before the sell
         buy_res = await session.execute(
             select(Trade)
-            .where(Trade.symbol == sell_trade.symbol, Trade.side == "BUY")
+            .where(Trade.symbol == sell_trade.symbol, Trade.side == "BUY", Trade.timestamp <= sell_trade.timestamp)
             .order_by(Trade.timestamp.desc())
         )
         buy_trade = buy_res.scalars().first()
-        
+
         entry_price = buy_trade.price if buy_trade else sell_trade.price
         exit_price = sell_trade.price
         pnl = sell_trade.realized_pnl
         pnl_pct = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0.0
-        
-        # Determine catalyst from trade rationale
+
+        # CIO entries are recorded as "<CATALYST_TYPE> entry: ..."
         catalyst = "MANUAL_EXECUTION"
-        if "FORENSIC" in sell_trade.reason.upper() or (buy_trade and "FORENSIC" in buy_trade.reason.upper()):
-            catalyst = "FORENSIC_HIGH_QUALITY"
-        elif "FORM 4" in sell_trade.reason.upper() or (buy_trade and "FORM 4" in buy_trade.reason.upper()):
-            catalyst = "SEC_FORM4_CLUSTER_BUY"
-        elif "CONTRACT" in sell_trade.reason.upper() or (buy_trade and "CONTRACT" in buy_trade.reason.upper()):
-            catalyst = "GOV_CONTRACT_AWARD"
-        elif "SQUEEZE" in sell_trade.reason.upper() or (buy_trade and "SQUEEZE" in buy_trade.reason.upper()):
-            catalyst = "SHORT_SQUEEZE_SETUP"
-        elif "RED FLAG" in sell_trade.reason.upper() or (buy_trade and "RED FLAG" in buy_trade.reason.upper()):
-            catalyst = "ACCOUNTING_RED_FLAG"
+        m = re.match(r"^([A-Z0-9_]+) entry:", (buy_trade.reason or "") if buy_trade else "")
+        if m:
+            catalyst = m.group(1)
 
         outcome = "WIN" if pnl > 0.01 else ("LOSS" if pnl < -0.01 else "BREAKEVEN")
-        
-        # Generate plain English lesson
-        if outcome == "WIN":
-            summary = f"Profitable exit on ${sell_trade.symbol} (+{pnl_pct:.2f}% / +${pnl:.2f})."
-            lesson = f"The {catalyst} thesis provided strong price support. Execution filled cleanly at ${exit_price:.2f}."
-        elif outcome == "LOSS":
-            summary = f"Loss on ${sell_trade.symbol} ({pnl_pct:.2f}% / -${abs(pnl):.2f})."
-            lesson = f"Stop-loss was triggered. Catalyst momentum was insufficient to overcome prevailing market drag."
-        else:
-            summary = f"Breakeven exit on ${sell_trade.symbol} ($0.00 PnL)."
-            lesson = f"Position closed near cost basis with minimal slippage impact."
+        held = ""
+        if buy_trade and buy_trade.timestamp and sell_trade.timestamp:
+            held = f" after {(sell_trade.timestamp - buy_trade.timestamp).days}d"
+
+        summary = f"{outcome.title()} on ${sell_trade.symbol}: {pnl_pct:+.2f}% (${pnl:+.2f}){held}."
+        lesson = f"Entry ${entry_price:.2f} via {catalyst}; exit ${exit_price:.2f}. Exit reason: {sell_trade.reason or 'n/a'}."
 
         reflection = TradeReflection(
             trade_id=sell_trade.id,

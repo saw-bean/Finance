@@ -15,7 +15,7 @@ export default function LiveSignals({ signals, onSelectTicker, onExecuteOrder })
       case 'GOV_CONTRACT_AWARD':
         return { label: 'Federal / Defense Contract', color: 'bg-amber-950/80 text-amber-300 border-amber-800/80', icon: Award };
       case 'SHORT_SQUEEZE_SETUP':
-        return { label: 'FINRA Short Squeeze Alert', color: 'bg-purple-950/80 text-purple-300 border-purple-800/80', icon: Zap };
+        return { label: 'Short Interest Squeeze Alert', color: 'bg-purple-950/80 text-purple-300 border-purple-800/80', icon: Zap };
       case 'FORENSIC_HIGH_QUALITY':
         return { label: 'Forensic Quality Screen Passed', color: 'bg-teal-950/80 text-teal-300 border-teal-800/80', icon: ShieldCheck };
       case 'ACCOUNTING_RED_FLAG':
@@ -42,7 +42,7 @@ export default function LiveSignals({ signals, onSelectTicker, onExecuteOrder })
             Live Alpha Signal Stream
           </h2>
           <p className="text-xs text-slate-400">
-            Real-time asymmetric catalysts ingested by autonomous sniper agents from free public feeds.
+            Catalysts detected by the agents from free public feeds (SEC EDGAR, USASpending, Yahoo Finance).
           </p>
         </div>
 
@@ -87,7 +87,7 @@ export default function LiveSignals({ signals, onSelectTicker, onExecuteOrder })
           <Activity className="w-12 h-12 text-slate-600 mx-auto mb-3 animate-pulse" />
           <h3 className="text-sm font-semibold text-slate-300">Awaiting New Market Catalysts</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-            Agents are continuously polling SEC EDGAR, USASpending, FINRA, and financial statements in the background. Signals will appear here in real-time.
+            Agents are polling SEC EDGAR, USASpending, and Yahoo Finance in the background. Signals will appear here in real-time.
           </p>
         </div>
       ) : (

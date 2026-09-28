@@ -172,7 +172,7 @@ export default function SettingsModal({ isOpen, onClose }) {
               </div>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Every single <strong>BUY</strong>, <strong>SELL</strong> (stop-loss / take-profit), and <strong>Autonomous Self-Upgrade</strong> will be pushed instantly to your phone.
+              Every single <strong>BUY</strong>, <strong>SELL</strong> (stop-loss / take-profit) will be pushed instantly to your phone.
             </p>
           </div>
 

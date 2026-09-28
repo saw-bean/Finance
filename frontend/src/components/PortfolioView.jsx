@@ -101,14 +101,14 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
           </div>
           <button
             onClick={() => {
-              if (window.confirm('Are you sure you want to reset the paper portfolio back to $100,000 cash?')) {
+              if (window.confirm('Are you sure you want to reset the paper portfolio back to its initial cash? All positions and trade history will be deleted.')) {
                 onResetPortfolio();
               }
             }}
             className="flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-rose-400 transition mt-2"
           >
             <RotateCcw className="w-3 h-3" />
-            <span>Reset to Initial $100k</span>
+            <span>Reset to Initial Cash</span>
           </button>
         </div>
 

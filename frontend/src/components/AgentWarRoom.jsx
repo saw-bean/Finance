@@ -53,7 +53,7 @@ export default function AgentWarRoom({ agents, logs, onTriggerAgent }) {
       <div className="bg-slate-900/60 p-4 rounded-xl border border-slate-800">
         <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
           <Cpu className="w-5 h-5 text-indigo-400" />
-          Autonomous Agent Swarm (War Room)
+          Agent Status (War Room)
         </h2>
         <p className="text-xs text-slate-400">
           Independent worker agents running asynchronous continuous pipelines on zero-cost public feeds.

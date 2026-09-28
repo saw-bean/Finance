@@ -57,7 +57,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Home },
-    { id: 'boss', label: 'Boss Director', icon: Crown, badge: 'Architect' },
+    { id: 'boss', label: 'Fund Audit', icon: Crown },
     { id: 'learning', label: 'AI Brain & Learning', icon: Brain, badge: 'Adaptive' },
     { id: 'signals', label: 'Live Signals', icon: Activity, badge: status?.total_signals_detected },
     { id: 'screener', label: 'Stock Screener', icon: Search },

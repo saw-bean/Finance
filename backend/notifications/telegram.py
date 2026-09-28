@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from zoneinfo import ZoneInfo
 import logging
 import re
 import httpx
@@ -60,9 +61,6 @@ class TelegramNotifier:
         text = f"{emoji} <b>SOLD ${symbol}</b>: {qty} shs @ ${exit_price:.2f} ({pnl})"
         await self.send_message(text)
 
-    async def send_self_evolution_alert(self, title: str, reason: str, action: str):
-        logger.info(f"Self-evolution upgrade: {title}")
-
     # -------------------------------------------------------------------------
     # Conversational Listener & Daily Briefings
     # -------------------------------------------------------------------------
@@ -115,18 +113,17 @@ class TelegramNotifier:
                     await asyncio.sleep(60)
                     continue
 
-                now_utc = datetime.datetime.now(datetime.timezone.utc)
-                today_str = now_utc.strftime("%Y-%m-%d")
+                # New York local time, so briefings stay correct across EST/EDT
+                now_ny = datetime.datetime.now(ZoneInfo("America/New_York"))
+                today_str = now_ny.strftime("%Y-%m-%d")
 
                 # Weekdays only (Monday=0 to Friday=4)
-                if now_utc.weekday() < 5:
-                    # 9:00 AM EDT = 13:00 UTC
-                    if now_utc.hour == 13 and now_utc.minute >= 0 and last_morning_date != today_str:
+                if now_ny.weekday() < 5:
+                    if now_ny.hour == 9 and last_morning_date != today_str:
                         last_morning_date = today_str
                         await self._send_morning_briefing()
 
-                    # 4:15 PM EDT = 20:15 UTC
-                    if now_utc.hour == 20 and now_utc.minute >= 15 and last_evening_date != today_str:
+                    if now_ny.hour == 16 and now_ny.minute >= 15 and last_evening_date != today_str:
                         last_evening_date = today_str
                         await self._send_closing_recap()
             except Exception as e:
@@ -141,13 +138,12 @@ class TelegramNotifier:
             pos_res = await session.execute(select(Position).order_by(desc(Position.market_value)))
             positions = pos_res.scalars().all()
 
-        pos_str = ", ".join([f"${p.symbol}" for p in positions[:4]]) or "100% Liquid"
+        pos_str = ", ".join([f"${p.symbol}" for p in positions[:4]]) or "None (all cash)"
         text = (
             f"🌅 <b>ALPHAFORGE MORNING BRIEFING (9:00 AM ET)</b>\n\n"
             f"• <b>Total Equity:</b> ${acc['total_equity']:.2f} (Cash: ${acc['cash']:.2f})\n"
             f"• <b>Active Holdings ({len(positions)}):</b> {pos_str}\n"
-            f"• <b>Market Status:</b> Sniper Mode & Ratchet Trailing Stops Active\n\n"
-            f"<i>Pre-market catalyst filters armed for 9:30 AM open.</i>"
+            f"• <b>Queued signals</b> will be evaluated at the 9:30 AM open."
         )
         await self.send_message(text)
 
@@ -162,7 +158,7 @@ class TelegramNotifier:
             f"• <b>Account Value:</b> ${acc['total_equity']:.2f}\n"
             f"• <b>Total Return:</b> {emoji} {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n"
             f"• <b>Invested in Market:</b> ${acc['positions_value']:.2f} ({acc['open_positions_count']} positions)\n\n"
-            f"<i>24/7 Swarm continues scanning after-hours Form 4 filings and DoD contracts.</i>"
+            f"<i>Agents keep collecting filings overnight; no fills until the next open.</i>"
         )
         await self.send_message(text)
 
@@ -170,12 +166,7 @@ class TelegramNotifier:
         msg = user_msg.lower().strip()
 
         # 0. Boss Architect & Fund Director Commands
-        if any(k in msg for k in ["/boss", "boss", "director", "architect", "/audit", "audit", "spawn", "/spawn"]):
-            if "spawn" in msg:
-                words = [w for w in user_msg.replace("/boss", "").replace("boss", "").replace("/spawn", "").replace("spawn", "").strip().split() if w]
-                stype = words[0].upper() if words else "BIOTECH_FDA"
-                await self._reply_boss_spawn(stype, chat_id)
-                return
+        if any(k in msg for k in ["/boss", "boss", "/audit", "audit"]):
             await self._reply_boss_status(chat_id)
             return
 
@@ -198,15 +189,15 @@ class TelegramNotifier:
         if "why" in msg:
             clean = user_msg.replace("why", "").replace("Why", "").replace("did", "").replace("we", "").replace("buy", "").strip("$.,!? ")
             words = clean.split()
-            target = words[0].upper() if words else "PLTR"
-            await self._reply_why_bought(target, chat_id)
-            return
+            if words:
+                await self._reply_why_bought(words[0].upper(), chat_id)
+                return
 
         # 5. Scan / Ticker lookup
         if any(k in msg for k in ["scan", "check", "analyze", "look at", "/scan"]) or (len(user_msg.split()) == 1 and len(user_msg) <= 5 and user_msg.isalpha()):
             words = [w.strip("$.,!?") for w in user_msg.split() if w.strip("$.,!?").isalpha() and len(w.strip("$.,!?")) <= 5]
-            target_ticker = words[-1].upper() if words else "PLTR"
-            if target_ticker.lower() not in ["hi", "hey", "help", "scan", "check"]:
+            target_ticker = words[-1].upper() if words else ""
+            if target_ticker and target_ticker.lower() not in ["hi", "hey", "help", "scan", "check"]:
                 await self._reply_scan_ticker(target_ticker, chat_id)
                 return
 
@@ -235,7 +226,9 @@ class TelegramNotifier:
             positions = pos_res.scalars().all()
 
         if not positions:
-            await self.send_message("💼 <b>Holdings:</b> None (100% Cash: $100.00)", chat_id=chat_id)
+            from backend.execution.paper_engine import paper_engine
+            acc = await paper_engine.get_account_summary()
+            await self.send_message(f"💼 <b>Holdings:</b> None (all cash: ${acc['cash']:.2f})", chat_id=chat_id)
             return
 
         lines = [f"💼 <b>Active Holdings ({len(positions)}):</b>"]
@@ -254,7 +247,7 @@ class TelegramNotifier:
             f"• <b>P/L:</b> {pnl_sign}${acc['total_pnl']:.2f} ({pnl_sign}{acc['total_pnl_pct']:.2f}%)\n"
             f"• <b>Invested:</b> ${acc['positions_value']:.2f}\n"
             f"• <b>Cash:</b> ${acc['cash']:.2f}\n"
-            f"• ⏱️ <b>24/7 Autopilot:</b> Active & Monitoring"
+            f"• <b>Open positions:</b> {acc['open_positions_count']}"
         )
         await self.send_message(text, chat_id=chat_id)
 
@@ -282,15 +275,24 @@ class TelegramNotifier:
             await self.send_message(f"We don't hold <b>${ticker}</b>.", chat_id=chat_id)
             return
 
-        cat = pos.catalyst.replace("_", " ").title() if pos.catalyst else "Fundamental Screener"
-        text = f"💡 <b>${ticker}:</b> {cat}\n• Entry: ${pos.avg_entry_price:.2f} | Stop: ${pos.stop_loss:.2f} | Target: ${pos.take_profit or 'Trailing Runner'}"
+        cat = pos.catalyst.replace("_", " ").title() if pos.catalyst else "Unknown"
+        stop = f"${pos.stop_loss:.2f}" if pos.stop_loss else "none"
+        target = f"${pos.take_profit:.2f}" if pos.take_profit else "trailing"
+        text = f"💡 <b>${ticker}:</b> {cat}\n• Entry: ${pos.avg_entry_price:.2f} | Stop: {stop} | Target: {target}"
         await self.send_message(text, chat_id=chat_id)
 
     async def _reply_scan_ticker(self, ticker: str, chat_id: str):
         data = await asyncio.to_thread(forensic_agent.analyze_ticker, ticker)
-        rec = data.get("recommendation", "HOLD")
-        verdict = "🟢 Safe / Buy" if "BUY" in rec else ("🔴 High Risk" if "AVOID" in rec or "SHORT" in rec else "🟡 Neutral")
-        text = f"🔍 <b>${ticker}</b>: {verdict}\n• Piotroski: {data.get('piotroski_f_score', 7)}/9 | Altman: {data.get('altman_zone', 'Safe')}"
+        if "error" in data:
+            await self.send_message(f"🔍 <b>${ticker}</b>: {data['error']}", chat_id=chat_id)
+            return
+        rec = data["recommendation"]
+        verdict = ("⚪ Not enough data" if rec == "INSUFFICIENT_DATA" else
+                   "🟢 Strong" if "BUY" in rec else ("🔴 High Risk" if "AVOID" in rec else "🟡 Neutral"))
+        f = data["piotroski_f_score"]
+        text = (f"🔍 <b>${ticker}</b>: {verdict}\n"
+                f"• Piotroski: {'n/a' if f is None else f'{f}/9'} | Altman: {data['altman_zone']} | "
+                f"Beneish: {'n/a' if data['beneish_m_score'] is None else data['beneish_m_score']}")
         await self.send_message(text, chat_id=chat_id)
 
     async def _reply_learning_winrates(self, chat_id: str):
@@ -299,48 +301,26 @@ class TelegramNotifier:
             perfs = perf_res.scalars().all()
 
         lines = ["🧠 <b>Strategy Win Rates:</b>"]
-        for p in perfs[:3]:
-            lines.append(f"• <b>{p.display_name}:</b> {p.win_rate*100:.0f}% ({p.calibrated_weight:.2f}x weight)")
+        traded = [p for p in perfs if p.total_trades]
+        if not traded:
+            lines.append("No closed trades yet.")
+        for p in traded[:5]:
+            lines.append(f"• <b>{p.display_name}:</b> {p.wins}/{p.total_trades} wins ({p.calibrated_weight:.2f}x weight)")
         await self.send_message("\n".join(lines), chat_id=chat_id)
 
     async def _reply_boss_status(self, chat_id: str):
         from backend.agents.boss_agent import boss_agent
-        from backend.agents.registry import agent_registry
         audit = await boss_agent.conduct_system_audit()
-        
-        acc = audit.get("account", {})
-        agents = agent_registry.list_agents()
-        score = audit.get("health_score", 95.0)
-        recs = audit.get("recommendations", [])
-        rec_str = recs[0] if recs else "Swarm operating at peak efficiency."
-        
+        acc = audit["account"]
+        wr = "no closed trades" if audit["win_rate"] is None else f"{audit['win_rate']:.0f}% of {audit['closed_trades']}"
+        recs = "\n".join(f"• {r}" for r in audit["recommendations"]) or "• Nothing flagged."
         text = (
-            f"👑 <b>CHIEF ARCHITECT & FUND BOSS AUDIT</b>\n\n"
-            f"• <b>Swarm Health Score:</b> <b>{score:.0f}/100</b>\n"
-            f"• <b>Active Swarm Agents:</b> {len(agents)} autonomous agents\n"
-            f"• <b>Account Equity:</b> ${acc.get('total_equity', 100.0):.2f} ({acc.get('open_positions', 0)} open positions)\n"
-            f"• <b>Historical Win Rate:</b> {audit.get('win_rate', 60.0):.0f}%\n"
-            f"• <b>Executive Directive:</b> <i>{rec_str}</i>\n\n"
-            f"<i>Type '/boss spawn BIOTECH_FDA' to autonomously synthesize & hot-deploy new sub-agents.</i>"
+            f"📊 <b>FUND AUDIT</b>\n\n"
+            f"• <b>Health:</b> {audit['health_score']:.0f}/100\n"
+            f"• <b>Equity:</b> ${acc['total_equity']:.2f} ({acc['open_positions']} open positions)\n"
+            f"• <b>Win rate:</b> {wr}\n\n"
+            f"{recs}"
         )
-        await self.send_message(text, chat_id=chat_id)
-
-    async def _reply_boss_spawn(self, strategy_type: str, chat_id: str):
-        from backend.agents.boss_agent import boss_agent
-        await self.send_message(f"🛠️ <b>Boss Synthesizing:</b> Writing, AST-validating, and testing Python code for strategy <code>{strategy_type}</code>...", chat_id=chat_id)
-        
-        success, msg, agent_inst = await boss_agent.synthesize_and_deploy_agent(strategy_type=strategy_type)
-        if success and agent_inst:
-            text = (
-                f"✅ <b>BOSS SUB-AGENT HOT-DEPLOYED!</b>\n\n"
-                f"• <b>Agent Name:</b> {agent_inst.display_name}\n"
-                f"• <b>Strategy:</b> {strategy_type}\n"
-                f"• <b>Status:</b> Live & Running in Swarm (AST Verified)\n"
-                f"• <b>Poll Interval:</b> {agent_inst.interval_seconds}s"
-            )
-        else:
-            text = f"❌ <b>Boss Deployment Error:</b> {msg}"
-            
         await self.send_message(text, chat_id=chat_id)
 
 telegram_notifier = TelegramNotifier()

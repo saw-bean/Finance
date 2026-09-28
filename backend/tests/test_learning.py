@@ -20,7 +20,7 @@ async def test_learning_reflection_and_catalyst_calibration():
             commission=0.05,
             total_cost=500.15,
             realized_pnl=0.0,
-            reason="CIO Synthesis: Form 4 Insider Accumulation (Conf: 85%)",
+            reason="SEC_FORM4_CLUSTER_BUY entry: Insider open-market buy (conf 85%)",
             broker="SIMULATED_PAPER"
         )
         session.add(buy_trade)
@@ -52,7 +52,7 @@ async def test_learning_reflection_and_catalyst_calibration():
         assert reflection.outcome == "WIN"
         assert reflection.realized_pnl == 49.7
         assert reflection.catalyst == "SEC_FORM4_CLUSTER_BUY"
-        assert "Profitable exit" in reflection.reflection_summary
+        assert reflection.reflection_summary.startswith("Win on")
 
 @pytest.mark.asyncio
 async def test_learning_and_holdings_api_endpoints():
@@ -64,7 +64,7 @@ async def test_learning_and_holdings_api_endpoints():
         perfs = perf_res.json()
         assert isinstance(perfs, list)
         assert len(perfs) >= 1
-        assert "win_rate" in perfs[0]
+        assert "win_rate_pct" in perfs[0]
         assert "calibrated_weight" in perfs[0]
 
         # Test /api/learning/reflections

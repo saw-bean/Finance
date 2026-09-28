@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     )
 
     ENVIRONMENT: str = "production"
+
+    # Required to use the dashboard/API when set. run.py generates one on first start.
+    API_TOKEN: Optional[str] = None
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DATABASE_URL: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/alphaforge.db"
@@ -32,10 +35,10 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "deepseek-r1:latest"
     
-    # Webhook Alerts & Telegram Push (Embedded Cloud Defaults)
+    # Webhook Alerts & Telegram Push (set in .env, never commit secrets)
     DISCORD_WEBHOOK_URL: Optional[str] = None
-    TELEGRAM_BOT_TOKEN: Optional[str] = "8705428209:AAGs4TszbtcNNXfeYOgYkGiLVbm-DNE8ljw"
-    TELEGRAM_CHAT_ID: Optional[str] = "8572984163"
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
     
     # Risk & Portfolio Parameters
     PAPER_INITIAL_CASH: float = 100.0

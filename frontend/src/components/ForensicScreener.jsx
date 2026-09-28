@@ -81,6 +81,13 @@ export default function ForensicScreener({ initialTicker, onExecuteOrder }) {
         label: '🔴 High Risk / Accounting Warning',
         description: 'Caution: Company exhibits deteriorating profit quality, negative operating cash flow, or elevated earnings manipulation metrics.'
       };
+    } else if (rec === 'INSUFFICIENT_DATA') {
+      return {
+        color: 'bg-slate-900 text-slate-300 border-slate-600',
+        dot: 'bg-slate-400',
+        label: '⚪ Not Enough Data',
+        description: 'Yahoo Finance does not have enough statement data to compute all three scores for this company.'
+      };
     } else {
       return {
         color: 'bg-amber-950 text-amber-300 border-amber-600',
@@ -197,15 +204,15 @@ export default function ForensicScreener({ initialTicker, onExecuteOrder }) {
                   </div>
                   <div className="text-slate-300 flex items-start gap-2">
                     <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>Balance Sheet Health:</strong> Piotroski F-Score is {metrics.piotroski_f_score}/9 ({metrics.piotroski_f_score >= 7 ? 'Strong' : 'Weak'}).</span>
+                    <span><strong>Balance Sheet Health:</strong> {metrics.piotroski_f_score == null ? 'Piotroski F-Score unavailable (missing statement data).' : `Piotroski F-Score is ${metrics.piotroski_f_score}/9 (${metrics.piotroski_f_score >= 7 ? 'Strong' : 'Weak'}).`}</span>
                   </div>
                   <div className="text-slate-300 flex items-start gap-2">
                     <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>Earnings Quality:</strong> {metrics.earnings_quality} (Beneish M-Score is {metrics.beneish_m_score}, {metrics.beneish_m_score < -1.78 ? 'low manipulation risk' : 'elevated manipulation risk'}).</span>
+                    <span><strong>Earnings Quality:</strong> {metrics.beneish_m_score == null ? 'Beneish M-Score not computable for this company.' : `${metrics.earnings_quality} (Beneish M-Score is ${metrics.beneish_m_score}, ${metrics.beneish_m_score < -1.78 ? 'low manipulation risk' : 'elevated manipulation risk'}).`}</span>
                   </div>
                   <div className="text-slate-300 flex items-start gap-2">
                     <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                    <span><strong>Solvency:</strong> Altman Z-Score is {metrics.altman_z_score} ({metrics.altman_zone} safety zone).</span>
+                    <span><strong>Solvency:</strong> {metrics.altman_z_score == null ? 'Altman Z-Score unavailable (missing statement data).' : `Altman Z-Score is ${metrics.altman_z_score} (${metrics.altman_zone} zone).`}</span>
                   </div>
                 </div>
               </div>

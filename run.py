@@ -22,6 +22,19 @@ def print_banner():
 """
     print(banner)
 
+def ensure_api_token(env_file: Path):
+    """Generates an API_TOKEN in .env on first run so the dashboard is never left open."""
+    import secrets
+    text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+    for line in text.splitlines():
+        if line.startswith("API_TOKEN=") and line.split("=", 1)[1].strip():
+            return
+    token = secrets.token_urlsafe(24)
+    lines = [l for l in text.splitlines() if not l.startswith("API_TOKEN=")]
+    lines.append(f"API_TOKEN={token}")
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[INFO] Generated API_TOKEN in .env. Dashboard login token: {token}")
+
 def verify_environment():
     data_dir = BASE_DIR / "data"
     data_dir.mkdir(exist_ok=True)
@@ -34,6 +47,8 @@ def verify_environment():
             shutil.copy(str(example_file), str(env_file))
             print("[INFO] Created .env from .env.example")
             
+    ensure_api_token(env_file)
+
     static_index = BASE_DIR / "backend" / "static" / "index.html"
     if not static_index.exists():
         print("[INFO] Building frontend bundle...")

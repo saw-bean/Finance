@@ -6,15 +6,20 @@ def test_analyze_ticker_structure():
     assert "ticker" in metrics
     assert metrics["ticker"] == "PLTR"
     assert "piotroski_f_score" in metrics
-    assert 0 <= metrics["piotroski_f_score"] <= 9
+    assert metrics["piotroski_f_score"] is None or 0 <= metrics["piotroski_f_score"] <= 9
     assert "beneish_m_score" in metrics
     assert "altman_z_score" in metrics
     assert "altman_zone" in metrics
-    assert metrics["altman_zone"] in ("Safe", "Grey", "Distress")
+    assert metrics["altman_zone"] in ("Safe", "Grey", "Distress", "Unknown")
     assert "recommendation" in metrics
-    assert metrics["recommendation"] in ("STRONG_BUY", "BUY", "HOLD", "AVOID/SHORT")
+    assert metrics["recommendation"] in ("STRONG_BUY", "BUY", "HOLD", "AVOID/SHORT", "INSUFFICIENT_DATA")
 
-def test_beneish_m_score_threshold():
+def test_beneish_m_score_missing_data_is_none():
     score, breakdown = forensic_agent._calc_beneish_m_score(None, None, None)
-    assert score <= -1.78
-    assert breakdown["manipulation_risk"] == "Low"
+    assert score is None
+    assert breakdown["manipulation_risk"] == "Unknown"
+
+
+def test_piotroski_needs_data():
+    score, evaluated, _ = forensic_agent._calc_piotroski_f_score(None, None, None)
+    assert score is None and evaluated == 0

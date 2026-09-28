@@ -8,23 +8,21 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-import yfinance as yf
 
 from backend.db.session import get_db, async_session_factory, commit_with_retry
 from backend.db.models import (
     Signal, Position, Trade, AgentState, AgentLog, PortfolioSnapshot, 
-    AccountBalance, TradeReflection, CatalystPerformance, BossDirective, SystemEvolution
+    AccountBalance, TradeReflection, CatalystPerformance
 )
 from backend.execution.paper_engine import paper_engine
 from backend.agents.registry import agent_registry
 from backend.agents.sec_edgar import sec_agent
-from backend.agents.forensic_quant import forensic_agent
+from backend.agents.forensic_quant import forensic_agent, get_live_price
 from backend.agents.contract_catalyst import contract_agent
 from backend.agents.flow_gamma import flow_agent
 from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
-from backend.agents.evolution_agent import evolution_agent
 from backend.agents.boss_agent import boss_agent
 from backend.notifications.telegram import telegram_notifier
 from backend.config import settings, BASE_DIR
@@ -64,26 +62,8 @@ class SettingsUpdateRequest(BaseModel):
     default_take_profit_pct: Optional[float] = None
 
 def _get_ticker_price_sync(symbol: str) -> float:
-    symbol = symbol.upper().strip()
-    try:
-        stock = yf.Ticker(symbol)
-        if hasattr(stock, 'fast_info') and stock.fast_info:
-            p = stock.fast_info.get('last_price') or stock.fast_info.get('previous_close')
-            if p and p > 0:
-                return float(p)
-        info = stock.info or {}
-        p = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose") or 0.0
-        if p > 0:
-            return float(p)
-    except Exception:
-        pass
-
-    fallback_map = {
-        "PLTR": 180.50, "SOUN": 4.85, "HIMS": 28.50, "SMCI": 36.80, "BBAI": 2.95,
-        "ASTS": 56.00, "RKLB": 24.10, "IONQ": 31.20, "JOBY": 8.40, "ACHR": 6.70,
-        "AAPL": 235.00, "NVDA": 128.00, "TSLA": 215.00, "MSFT": 448.00, "AMZN": 188.00
-    }
-    return float(fallback_map.get(symbol, 25.0))
+    """Live price or 0.0; never a made-up fallback."""
+    return get_live_price(symbol)
 
 @router.get("/status")
 async def get_system_status(db: AsyncSession = Depends(get_db)):
@@ -178,8 +158,9 @@ async def get_learning_performance(db: AsyncSession = Depends(get_db)):
             "total_trades": p.total_trades,
             "wins": p.wins,
             "losses": p.losses,
-            "win_rate": p.win_rate,
-            "win_rate_pct": round(p.win_rate * 100, 1),
+            # Actual record; None until a trade closes. Smoothed rate only drives sizing weights.
+            "win_rate_pct": round(p.wins / p.total_trades * 100, 1) if p.total_trades else None,
+            "smoothed_win_rate": p.win_rate,
             "total_pnl": p.total_pnl,
             "avg_return_pct": p.avg_return_pct,
             "calibrated_weight": p.calibrated_weight,
@@ -320,9 +301,10 @@ async def get_portfolio(db: AsyncSession = Depends(get_db)):
     trade_res = await db.execute(select(Trade).order_by(desc(Trade.timestamp)).limit(50))
     trades = trade_res.scalars().all()
     
-    snap_res = await db.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.timestamp.asc()).limit(100))
-    snapshots = snap_res.scalars().all()
-    
+    # Most recent snapshots, oldest first for charting
+    snap_res = await db.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.timestamp.desc()).limit(500))
+    snapshots = list(reversed(snap_res.scalars().all()))
+
     return {
         "summary": summary,
         "positions": [
@@ -398,8 +380,11 @@ async def close_position(symbol: str):
             raise HTTPException(status_code=404, detail="Position not found")
         
         qty = pos.qty
-        price = pos.current_price
-        
+
+    price = await asyncio.to_thread(_get_ticker_price_sync, symbol)
+    if price <= 0:
+        raise HTTPException(status_code=503, detail=f"Cannot fetch live price for {symbol}")
+
     result = await paper_engine.execute_order(
         symbol=symbol,
         side="SELL",
@@ -449,18 +434,7 @@ async def get_agents(db: AsyncSession = Depends(get_db)):
 
 @router.post("/agents/{agent_name}/trigger")
 async def trigger_agent(agent_name: str):
-    agent_map = {
-        "sec_edgar_agent": sec_agent,
-        "forensic_quant_agent": forensic_agent,
-        "contract_catalyst_agent": contract_agent,
-        "flow_gamma_agent": flow_agent,
-        "cio_risk_agent": cio_agent,
-        "learning_agent": learning_agent,
-        "web_intel_agent": web_intel_agent,
-        "evolution_agent": evolution_agent
-    }
-    
-    target = agent_map.get(agent_name)
+    target = agent_registry.get(agent_name)
     if not target:
         raise HTTPException(status_code=404, detail="Agent not found")
         
@@ -569,88 +543,11 @@ async def update_settings(req: SettingsUpdateRequest):
 # BOSS ARCHITECT & FUND DIRECTOR ENDPOINTS
 # ------------------------------------------------------------------------------
 
-class BossSpawnRequest(BaseModel):
-    strategy_type: str
-    custom_params: Optional[Dict[str, Any]] = None
-
-class BossTuneRequest(BaseModel):
-    directive_key: str
-    value: Any
-    description: str
-
 @router.get("/boss/audit")
 async def get_boss_audit():
     """Returns real-time fund health scorecard, metrics, and recommendations from Boss."""
     audit = await boss_agent.conduct_system_audit()
     return audit
-
-@router.get("/boss/evolutions")
-async def get_boss_evolutions(db: AsyncSession = Depends(get_db)):
-    """Returns historical list of self-coded features, generated strategies, and deployments."""
-    res = await db.execute(
-        select(SystemEvolution)
-        .order_by(desc(SystemEvolution.timestamp))
-        .limit(50)
-    )
-    evolutions = res.scalars().all()
-    return [
-        {
-            "id": e.id,
-            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-            "action_type": e.action_type,
-            "title": e.title,
-            "description": e.description,
-            "code_path": e.code_path,
-            "code_content": e.code_content,
-            "ast_verified": e.ast_verified,
-            "sandbox_passed": e.sandbox_passed,
-            "target_agent": e.target_agent,
-            "status": e.status,
-            "impact_metrics": json.loads(e.impact_metrics or "{}")
-        }
-        for e in evolutions
-    ]
-
-@router.get("/boss/directives")
-async def get_boss_directives(db: AsyncSession = Depends(get_db)):
-    """Returns active directives and parameter overrides set by the Boss."""
-    res = await db.execute(select(BossDirective).where(BossDirective.active == True))
-    directives = res.scalars().all()
-    return [
-        {
-            "id": d.id,
-            "directive_key": d.directive_key,
-            "category": d.category,
-            "value": json.loads(d.value or "{}"),
-            "description": d.description,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-            "updated_at": d.updated_at.isoformat() if d.updated_at else None
-        }
-        for d in directives
-    ]
-
-@router.post("/boss/spawn")
-async def spawn_boss_strategy(req: BossSpawnRequest):
-    """Instructs the Boss to synthesize, AST-validate, test, and dynamically spawn a new strategy agent."""
-    success, msg, agent_inst = await boss_agent.synthesize_and_deploy_agent(
-        strategy_type=req.strategy_type,
-        custom_params=req.custom_params
-    )
-    if not success:
-        raise HTTPException(status_code=400, detail=msg)
-        
-    return {
-        "success": True,
-        "message": msg,
-        "agent_name": agent_inst.name if agent_inst else None,
-        "display_name": agent_inst.display_name if agent_inst else None
-    }
-
-@router.post("/boss/tune")
-async def tune_boss_directive(req: BossTuneRequest):
-    """Sets or overrides a Boss directive."""
-    await boss_agent._set_directive(req.directive_key, req.value, req.description)
-    return {"success": True, "message": f"Directive {req.directive_key} updated"}
 
 @router.post("/system/restart")
 async def restart_system():
