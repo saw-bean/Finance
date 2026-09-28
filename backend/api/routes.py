@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.session import get_db, async_session_factory, commit_with_retry
 from backend.db.models import (
     Signal, Position, Trade, AgentState, AgentLog, PortfolioSnapshot, 
-    AccountBalance, TradeReflection, CatalystPerformance
+    AccountBalance, TradeReflection, CatalystPerformance, CashLedger, BossDirective
 )
+from backend.analytics.metrics import compute_metrics
 from backend.execution.paper_engine import paper_engine
 from backend.agents.registry import agent_registry
 from backend.agents.sec_edgar import sec_agent
@@ -201,18 +202,15 @@ async def get_holdings_summary(db: AsyncSession = Depends(get_db)):
         pnl_pos = p.unrealized_pnl >= 0
         gain_text = f"+${p.unrealized_pnl:.2f} (+{p.unrealized_pnl_pct:.2f}%)" if pnl_pos else f"-${abs(p.unrealized_pnl):.2f} ({p.unrealized_pnl_pct:.2f}%)"
         
-        thesis_explanation = "Selected for superior balance sheet health (Piotroski Score 8-9) and positive cash generation."
-        if "FORM 4" in p.catalyst.upper():
-            thesis_explanation = "C-suite executives bought substantial shares on open market with personal capital."
-        elif "CONTRACT" in p.catalyst.upper():
-            thesis_explanation = "Company won a high-value government defense or tech task order."
-        elif "SQUEEZE" in p.catalyst.upper():
-            thesis_explanation = "High short interest + float turnover created asymmetric squeeze potential."
-        elif "MANUAL" in p.catalyst.upper():
-            thesis_explanation = "Executed directly by user from the dashboard."
+        # The thesis is the actual reason recorded on the order that opened the position
+        open_side = "BUY" if p.qty > 0 else "SHORT"
+        entry = (await db.execute(select(Trade).where(Trade.symbol == p.symbol, Trade.side == open_side)
+                                  .order_by(desc(Trade.timestamp)).limit(1))).scalars().first()
+        thesis_explanation = entry.reason if entry and entry.reason else (p.catalyst or "Unknown")
 
         summary_list.append({
             "symbol": p.symbol,
+            "side": "LONG" if p.qty > 0 else "SHORT",
             "shares": p.qty,
             "entry_price": p.avg_entry_price,
             "current_price": p.current_price,
@@ -319,6 +317,11 @@ async def get_portfolio(db: AsyncSession = Depends(get_db)):
                 "stop_loss": p.stop_loss,
                 "take_profit": p.take_profit,
                 "catalyst": p.catalyst,
+                "side": "LONG" if p.qty > 0 else "SHORT",
+                "sector": p.sector,
+                "agent_name": p.agent_name,
+                "borrow_rate": p.borrow_rate,
+                "exit_by": p.exit_by.isoformat() if p.exit_by else None,
                 "entry_time": p.entry_time.isoformat() if p.entry_time else None
             }
             for p in positions
@@ -336,7 +339,12 @@ async def get_portfolio(db: AsyncSession = Depends(get_db)):
                 "total_cost": t.total_cost,
                 "realized_pnl": t.realized_pnl,
                 "reason": t.reason,
-                "broker": t.broker
+                "broker": t.broker,
+                "catalyst": t.catalyst,
+                "agent_name": t.agent_name,
+                "fees": t.fees,
+                "mid_price": t.mid_price,
+                "quote_source": t.quote_source
             }
             for t in trades
         ],
@@ -354,17 +362,13 @@ async def get_portfolio(db: AsyncSession = Depends(get_db)):
 
 @router.post("/portfolio/order")
 async def execute_manual_order(req: ManualOrderRequest):
-    price = await asyncio.to_thread(_get_ticker_price_sync, req.symbol)
-    if price <= 0:
-        raise HTTPException(status_code=400, detail=f"Cannot fetch live price for {req.symbol}")
-        
     result = await paper_engine.execute_order(
         symbol=req.symbol,
         side=req.side,
         qty=req.qty,
-        current_price=price,
         reason=req.reason or "Manual Order",
-        catalyst="MANUAL_EXECUTION"
+        catalyst="MANUAL_EXECUTION",
+        agent_name="manual"
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))
@@ -381,17 +385,14 @@ async def close_position(symbol: str):
         
         qty = pos.qty
 
-    price = await asyncio.to_thread(_get_ticker_price_sync, symbol)
-    if price <= 0:
-        raise HTTPException(status_code=503, detail=f"Cannot fetch live price for {symbol}")
-
     result = await paper_engine.execute_order(
         symbol=symbol,
-        side="SELL",
-        qty=qty,
-        current_price=price,
+        side="SELL" if qty > 0 else "COVER",
+        qty=abs(qty),
         reason="Manual Close from Dashboard"
     )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
     return result
 
 @router.post("/portfolio/reset")
@@ -401,6 +402,7 @@ async def reset_portfolio():
         await session.execute(delete(Trade))
         await session.execute(delete(PortfolioSnapshot))
         await session.execute(delete(TradeReflection))
+        await session.execute(delete(CashLedger))
         
         acc_res = await session.execute(select(AccountBalance))
         acc = acc_res.scalars().first()
@@ -548,6 +550,16 @@ async def get_boss_audit():
     """Returns real-time fund health scorecard, metrics, and recommendations from Boss."""
     audit = await boss_agent.conduct_system_audit()
     return audit
+
+@router.get("/metrics")
+async def get_fund_metrics(refresh: bool = False):
+    """Performance, risk, trading, exposure, cost and attribution metrics for the paper fund."""
+    return await compute_metrics(force=refresh)
+
+@router.get("/regime")
+async def get_market_regime(db: AsyncSession = Depends(get_db)):
+    d = (await db.execute(select(BossDirective).where(BossDirective.directive_key == "MARKET_REGIME"))).scalars().first()
+    return json.loads(d.value) if d and d.value else {"regime": "UNKNOWN"}
 
 @router.post("/system/restart")
 async def restart_system():

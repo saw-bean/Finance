@@ -48,17 +48,19 @@ class TelegramNotifier:
     # -------------------------------------------------------------------------
     # Minimal 2-Line Push Alerts (Zero Clutter)
     # -------------------------------------------------------------------------
-    async def send_buy_alert(self, symbol: str, qty: float, price: float, total_cost: float, reason: str, catalyst: str, stop_loss: float = None, take_profit: float = None, total_equity: float = None, cash: float = None):
+    async def send_buy_alert(self, symbol: str, qty: float, price: float, total_cost: float, reason: str, catalyst: str, stop_loss: float = None, take_profit: float = None, total_equity: float = None, cash: float = None, side: str = "BUY"):
         sl = f" | Stop: ${stop_loss:.2f}" if stop_loss else ""
         tp = f" | TP: ${take_profit:.2f}" if take_profit else ""
-        text = f"🟢 <b>BUY ${symbol}</b>: {qty} shs @ ${price:.2f} (${total_cost:.2f}){sl}{tp}"
+        emoji = "🟢" if side == "BUY" else "🟣"
+        text = f"{emoji} <b>{side} ${symbol}</b>: {qty} shs @ ${price:.2f} (${total_cost:.2f}){sl}{tp}\n<i>{reason[:160]}</i>"
         await self.send_message(text)
 
-    async def send_sell_alert(self, symbol: str, qty: float, exit_price: float, entry_price: float, realized_pnl: float, pnl_pct: float, reason: str, total_equity: float = None):
+    async def send_sell_alert(self, symbol: str, qty: float, exit_price: float, entry_price: float, realized_pnl: float, pnl_pct: float, reason: str, total_equity: float = None, side: str = "SELL"):
         is_win = realized_pnl >= 0
         emoji = "🟢" if is_win else "🔴"
         pnl = f"+${realized_pnl:.2f} (+{pnl_pct:.1f}%)" if is_win else f"-${abs(realized_pnl):.2f} ({pnl_pct:.1f}%)"
-        text = f"{emoji} <b>SOLD ${symbol}</b>: {qty} shs @ ${exit_price:.2f} ({pnl})"
+        verb = "SOLD" if side == "SELL" else "COVERED"
+        text = f"{emoji} <b>{verb} ${symbol}</b>: {qty} shs @ ${exit_price:.2f} ({pnl})\n<i>{reason[:160]}</i>"
         await self.send_message(text)
 
     # -------------------------------------------------------------------------

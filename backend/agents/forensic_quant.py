@@ -95,10 +95,10 @@ class ForensicQuantAgent(BaseAgent):
 
                 if f_score is not None and z_score is not None and m_score is not None \
                         and f_score >= 7 and z_score > 2.99 and m_score < BENEISH_THRESHOLD:
-                    catalyst, action, conf = "FORENSIC_HIGH_QUALITY", "BUY", 0.80
+                    catalyst, action, conf, horizon = "FORENSIC_HIGH_QUALITY", "BUY", 0.80, 90
                     title = f"Forensic quality screen passed: {ticker}"
                 elif (m_score is not None and m_score > BENEISH_THRESHOLD) or (f_score is not None and f_score <= 2):
-                    catalyst, action, conf = "ACCOUNTING_RED_FLAG", "SELL", 0.84
+                    catalyst, action, conf, horizon = "ACCOUNTING_RED_FLAG", "SHORT", 0.84, 60
                     title = f"Forensic red flag: {ticker}"
                 else:
                     continue
@@ -116,7 +116,7 @@ class ForensicQuantAgent(BaseAgent):
                     summary=(f"Piotroski F: {f_score}/9 ({metrics['piotroski_tests_evaluated']} tests with data) | "
                              f"Altman Z: {z_score} | Beneish M: {m_score} "
                              f"(fiscal year ending {metrics['fiscal_year_end']})"),
-                    metadata=metrics
+                    metadata={**metrics, "horizon_days": horizon}
                 )
             except Exception as e:
                 logger.error(f"Error scanning ticker {ticker}: {e}")

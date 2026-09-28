@@ -1,298 +1,281 @@
+import asyncio
 import datetime
 import json
 import logging
-import asyncio
-import httpx
-from zoneinfo import ZoneInfo
-import yfinance as yf
+import math
+from typing import Dict, List, Optional
+
 from sqlalchemy import select, update
+
 from backend.agents.base import BaseAgent
-from backend.db.session import async_session_factory, commit_with_retry
-from backend.db.models import Signal, Position, AccountBalance, CatalystPerformance
-from backend.execution.paper_engine import paper_engine
-from backend.execution.alpaca_client import alpaca_client
 from backend.agents.forensic_quant import get_live_price, forensic_agent
 from backend.config import settings
+from backend.db.models import Signal, Position, CatalystPerformance, BossDirective, PortfolioSnapshot
+from backend.db.session import async_session_factory, commit_with_retry
+from backend.execution.alpaca_client import alpaca_client
+from backend.execution.paper_engine import paper_engine, _aware
+from backend.market.data import get_quote, is_market_open, NY, Quote
 
 logger = logging.getLogger("alphaforge.cio_agent")
 
 SIGNAL_MAX_AGE = datetime.timedelta(days=3)
-MIN_ENTRY_PRICE = 2.0  # below this, spreads and per-share costs swamp any catalyst
 OTC_EXCHANGES = {"PNK", "OQB", "OQX", "OEM", "OTC", "OBB", "OTCQB", "OTCQX", "PINK"}
-
-
-def _listing_check_sync(ticker: str):
-    """Returns (price, exchange code or None). Price 0.0 means no live quote."""
-    price = get_live_price(ticker)
-    try:
-        exchange = yf.Ticker(ticker).fast_info.get("exchange")
-    except Exception:
-        exchange = None
-    return price, exchange
+TRADABLE_TYPES = {"EQUITY", "ETF"}
 
 
 def _get_live_price_sync(ticker: str) -> float:
     return get_live_price(ticker)
 
 
-def is_market_open(now: datetime.datetime = None) -> bool:
-    """Regular NYSE session, Mon-Fri 9:30-16:00 New York time (exchange holidays not modelled)."""
-    now = (now or datetime.datetime.now(datetime.UTC)).astimezone(ZoneInfo("America/New_York"))
-    if now.weekday() >= 5:
-        return False
-    return datetime.time(9, 30) <= now.time() < datetime.time(16, 0)
+async def get_regime() -> Dict:
+    """Latest regime published by the regime agent (neutral defaults if none yet)."""
+    async with async_session_factory() as session:
+        d = (await session.execute(select(BossDirective).where(BossDirective.directive_key == "MARKET_REGIME"))).scalars().first()
+    if d and d.value:
+        try:
+            return json.loads(d.value)
+        except ValueError:
+            pass
+    return {"regime": "UNKNOWN", "risk_multiplier": 0.75, "allow_new_longs": True, "target_beta": 0.6}
 
 
 class CioRiskAgent(BaseAgent):
     """
-    Sniper CIO & Devil's Advocate Risk Management Agent.
-    Waits patiently for clear catalyst indications and asymmetric upside potential.
-    Executes instantly without artificial time limitations when a high-conviction setup is verified.
+    Portfolio manager and risk officer for the long/short book.
+
+    Turns agent signals into positions under hard limits: per-name size, sector concentration,
+    gross and net exposure, a daily loss circuit breaker, the market regime's risk multiplier,
+    shortability rules and forensic/red-flag vetoes. Fills only during the regular session.
     """
     def __init__(self):
         super().__init__(
             name="cio_risk_agent",
-            display_name="CIO & Devil's Advocate Risk Agent",
+            display_name="CIO & Risk Manager",
             interval_seconds=30
         )
-        self.min_confidence_bar = 0.78 # High-quality clear indication threshold
+        self._last_snapshot = None
 
     async def run_iteration(self):
-        # Paper fills only happen when a real order could fill: during the regular session.
-        # Outside it, signals wait in the queue (up to SIGNAL_MAX_AGE) and positions keep their last price.
         if is_market_open():
-            await self.log("INFO", "Market open: marking positions to market and evaluating queued signals...")
+            await paper_engine.accrue_borrow_fees()
             await self._update_open_positions_mtm()
             await self._process_unhandled_signals()
         else:
             await self.log("INFO", "Market closed: no fills until the next regular session. Signals remain queued.")
-        
-        # 3. Snapshot portfolio equity
-        await paper_engine.record_snapshot()
-        
+        # Equity only moves in session; off-hours a snapshot every 30 minutes is plenty
+        now = datetime.datetime.now(datetime.UTC)
+        if is_market_open() or self._last_snapshot is None or now - self._last_snapshot > datetime.timedelta(minutes=30):
+            await paper_engine.record_snapshot()
+            self._last_snapshot = now
         await self.update_status("RUNNING")
 
     async def _update_open_positions_mtm(self):
         async with async_session_factory() as session:
-            pos_res = await session.execute(select(Position))
-            positions = pos_res.scalars().all()
-            if not positions:
-                return
-            symbols = [p.symbol for p in positions]
-            
-        price_map = {}
-        for sym in symbols:
-            p = await asyncio.to_thread(_get_live_price_sync, sym)
-            if p > 0:
-                price_map[sym] = round(p, 2)
-
+            symbols = [p.symbol for p in (await session.execute(select(Position))).scalars().all()]
+        if not symbols:
+            return
+        prices = await asyncio.gather(*[asyncio.to_thread(_get_live_price_sync, s) for s in symbols])
+        price_map = {s: p for s, p in zip(symbols, prices) if p > 0}
         if price_map:
             await paper_engine.update_position_prices(price_map)
 
+    # ------------------------------------------------------------------
+    # Signal handling
+    # ------------------------------------------------------------------
+
     async def _process_unhandled_signals(self):
         now = datetime.datetime.now(datetime.UTC)
+        async with async_session_factory() as session:
+            raw = (await session.execute(select(Signal).where(Signal.processed == False).order_by(Signal.timestamp.asc()))).scalars().all()
+            if not raw:
+                return
+            expired = {s.id for s in raw if now - _aware(s.timestamp) > SIGNAL_MAX_AGE}
+            if expired:
+                await session.execute(update(Signal).where(Signal.id.in_(expired)).values(processed=True))
+                await commit_with_retry(session)
+            fresh = [s for s in raw if s.id not in expired]
+            if not fresh:
+                return
+            signals = [dict(id=s.id, ticker=s.ticker.upper(), action=s.action.upper(), conf=s.confidence,
+                            catalyst=s.catalyst_type, title=s.title, agent=s.agent_name,
+                            meta=json.loads(s.raw_metadata or "{}")) for s in fresh]
+            red_flags = set((await session.execute(select(Signal.ticker).where(
+                Signal.catalyst_type == "ACCOUNTING_RED_FLAG", Signal.timestamp >= now - datetime.timedelta(days=7)))).scalars().all())
+            weights = {p.catalyst_type: p.calibrated_weight for p in (await session.execute(select(CatalystPerformance))).scalars().all()}
+
+        candidates = []
+        for sig in signals:
+            held = await self._position(sig["ticker"])
+            action = sig["action"]
+            # Exits first: a bearish view closes longs, a bullish view closes shorts
+            if action in ("SELL", "SHORT") and held and held.qty > 0:
+                await self._close(held, "SELL", f"{sig['catalyst']}: {sig['title']}", sig)
+            if action in ("BUY", "COVER") and held and held.qty < 0:
+                await self._close(held, "COVER", f"{sig['catalyst']}: {sig['title']}", sig)
+            if action in ("BUY", "SHORT"):
+                w = weights.get(sig["catalyst"], 1.0)
+                sig["effective_conf"] = min(0.98, max(0.2, sig["conf"] * w))
+                candidates.append(sig)
+
+        if candidates:
+            await self._open_positions(candidates, red_flags)
 
         async with async_session_factory() as session:
-            sig_res = await session.execute(
-                select(Signal)
-                .where(Signal.processed == False)
-                .order_by(Signal.timestamp.asc())
-            )
-            raw_signals = sig_res.scalars().all()
-            if not raw_signals:
-                return
+            await session.execute(update(Signal).where(Signal.id.in_([s["id"] for s in signals])).values(processed=True))
+            await commit_with_retry(session)
 
-            # Stale catalysts are expired, not traded
-            expired_ids = []
-            fresh = []
-            for s in raw_signals:
-                ts = s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=datetime.timezone.utc)
-                (expired_ids if now - ts > SIGNAL_MAX_AGE else fresh).append(s)
-            if expired_ids:
-                await session.execute(update(Signal).where(Signal.id.in_([s.id for s in expired_ids])).values(processed=True))
-                await commit_with_retry(session)
-            raw_signals = fresh
-            if not raw_signals:
-                return
-            
-            signals_data = [
-                (s.id, s.ticker.upper(), s.action.upper(), s.confidence, s.catalyst_type, s.title, json.loads(s.raw_metadata or "{}"))
-                for s in raw_signals
-            ]
-            
-            # Conflict / Red Flag Filter
-            conflict_res = await session.execute(
-                select(Signal.ticker).where(
-                    Signal.catalyst_type == "ACCOUNTING_RED_FLAG",
-                    Signal.timestamp >= now - datetime.timedelta(days=7)
-                )
-            )
-            red_flagged_tickers = set(conflict_res.scalars().all())
+    async def _position(self, symbol: str) -> Optional[Position]:
+        async with async_session_factory() as session:
+            return (await session.execute(select(Position).where(Position.symbol == symbol))).scalars().first()
 
-            # Performance weights
-            perf_res = await session.execute(select(CatalystPerformance))
-            perfs = perf_res.scalars().all()
-            weight_map = {p.catalyst_type: p.calibrated_weight for p in perfs}
+    async def _close(self, pos: Position, side: str, reason: str, sig: Dict):
+        res = await paper_engine.execute_order(symbol=pos.symbol, side=side, qty=abs(pos.qty), reason=f"Exit on {reason}",
+                                               agent_name=sig.get("agent") or self.name)
+        if res.get("success"):
+            await self.log("ACTION", f"{side} {abs(pos.qty)} {pos.symbol} @ ${res['fill_price']:.2f} ({reason[:80]})", ticker=pos.symbol)
+            if alpaca_client.is_configured():
+                await alpaca_client.submit_order(symbol=pos.symbol, qty=abs(pos.qty), side="sell" if side == "SELL" else "buy")
+        else:
+            await self.log("WARNING", f"{side} {pos.symbol} failed: {res.get('error')}", ticker=pos.symbol)
 
-        processed_ids = []
-        buy_candidates = []
+    # ------------------------------------------------------------------
+    # Entries under risk limits
+    # ------------------------------------------------------------------
 
-        for sig_id, ticker, action, conf, catalyst, title, meta in signals_data:
-            processed_ids.append(sig_id)
-            dynamic_weight = weight_map.get(catalyst, 1.0)
-            effective_conf = min(0.98, max(0.20, conf * dynamic_weight))
+    async def _start_of_day_equity(self) -> Optional[float]:
+        sod = datetime.datetime.now(NY).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(datetime.timezone.utc)
+        async with async_session_factory() as session:
+            snap = (await session.execute(select(PortfolioSnapshot).where(PortfolioSnapshot.timestamp >= sod.replace(tzinfo=None))
+                                          .order_by(PortfolioSnapshot.timestamp.asc()).limit(1))).scalars().first()
+        return snap.total_equity if snap else None
 
-            if action == "SELL":
-                await self._execute_sell_signal(ticker, title)
-            elif action == "BUY":
-                buy_candidates.append({
-                    "id": sig_id,
-                    "ticker": ticker,
-                    "conf": conf,
-                    "effective_conf": effective_conf,
-                    "catalyst": catalyst,
-                    "title": title,
-                    "meta": meta,
-                    "dynamic_weight": dynamic_weight
-                })
-
-        # Process clear indication buy setups
-        if buy_candidates:
-            await self._evaluate_and_execute_clear_indications(buy_candidates, red_flagged_tickers)
-
-        # Mark processed signals
-        if processed_ids:
-            async with async_session_factory() as session:
-                await session.execute(
-                    update(Signal).where(Signal.id.in_(processed_ids)).values(processed=True)
-                )
-                await commit_with_retry(session)
-
-    async def _evaluate_and_execute_clear_indications(self, candidates: list, red_flags: set):
-        """Filters setups for clear indications and executes without time limits if verified."""
-        viable_entries = []
-
-        for c in candidates:
-            ticker = c["ticker"]
-            
-            # Veto 1: Fraud / Accounting Red Flag
-            if ticker in red_flags:
-                await self.log("WARNING", f"VETO on ${ticker}: Red flag active. Trade rejected.", ticker=ticker)
-                continue
-
-            # Veto 2: Web Intel Bear Veto
-            debate = c["meta"].get("bull_bear_debate", {})
-            if debate.get("verdict") == "BEAR_DOMINANT":
-                await self.log("WARNING", f"VETO on ${ticker}: Live web debate flagged risk friction. Entry skipped.", ticker=ticker)
-                continue
-
-            # Veto 3: Clear Indication Quality Threshold (Minimum 78% conviction)
-            if c["effective_conf"] < self.min_confidence_bar:
-                await self.log("INFO", f"Skipping ${ticker}: Conviction ({c['effective_conf']*100:.0f}%) below clear indication bar ({self.min_confidence_bar*100:.0f}%). Waiting for clearer setup.", ticker=ticker)
-                continue
-
-            viable_entries.append(c)
-
-        if not viable_entries:
+    async def _open_positions(self, candidates: List[Dict], red_flags: set):
+        account = await paper_engine.get_account_summary()
+        equity = account["total_equity"]
+        if equity <= 0:
             return
 
-        # Rank by conviction score
-        viable_entries.sort(key=lambda x: x["effective_conf"] * x["dynamic_weight"], reverse=True)
+        sod = await self._start_of_day_equity()
+        if sod and equity < sod * (1 - settings.MAX_DAILY_DRAWDOWN_PCT):
+            await self.log("WARNING", f"Daily loss limit hit (equity ${equity:.2f} vs ${sod:.2f} at open). No new entries today.")
+            return
 
-        for candidate in viable_entries:
-            ticker = candidate["ticker"]
-            effective_conf = candidate["effective_conf"]
-            dynamic_weight = candidate["dynamic_weight"]
-            title = candidate["title"]
-            catalyst = candidate["catalyst"]
+        regime = await get_regime()
+        mult = float(regime.get("risk_multiplier", 0.75))
+        candidates.sort(key=lambda c: c["effective_conf"], reverse=True)
 
-            account = await paper_engine.get_account_summary()
-            total_equity = account["total_equity"]
-            cash = account["cash"]
+        for c in candidates:
+            ticker, action, meta = c["ticker"], c["action"], c["meta"]
+            is_hedge = c["catalyst"] == "BETA_HEDGE"
+            going_long = action == "BUY"
 
-            if cash < 4.0:
-                await self.log("INFO", f"Capital fully deployed. Cash left: ${cash:.2f}. Waiting for exits.")
-                break
-
-            # Check single-stock concentration cap (max 25% in one ticker)
-            async with async_session_factory() as session:
-                pos_res = await session.execute(select(Position).where(Position.symbol == ticker))
-                existing_pos = pos_res.scalars().first()
-                current_holding_val = existing_pos.market_value if existing_pos else 0.0
-
-            max_allowed = total_equity * 0.25
-            room = max_allowed - current_holding_val
-            if room <= 2.0:
+            if action == "SHORT" and not settings.ALLOW_SHORTS:
                 continue
-
-            target_allocation = min(room, max(5.0, total_equity * settings.MAX_POSITION_SIZE_PCT * effective_conf))
-            order_size_dollars = min(target_allocation, cash * 0.95)
-
-            if order_size_dollars < 4.0:
-                continue
-
-            curr_price, exchange = await asyncio.to_thread(_listing_check_sync, ticker)
-            if curr_price <= 0:
-                continue
-            if curr_price < MIN_ENTRY_PRICE:
-                await self.log("INFO", f"Skipping ${ticker}: price ${curr_price:.4f} below ${MIN_ENTRY_PRICE:.2f} minimum.", ticker=ticker)
-                continue
-            if exchange and exchange.upper() in OTC_EXCHANGES:
-                await self.log("INFO", f"Skipping ${ticker}: over-the-counter listing ({exchange}).", ticker=ticker)
-                continue
-
-            # Don't buy what the forensic screen would immediately flag for exit
-            if catalyst != "FORENSIC_HIGH_QUALITY":
-                verdict = await asyncio.to_thread(forensic_agent.analyze_ticker, ticker)
-                if verdict.get("recommendation") == "AVOID/SHORT":
-                    await self.log("WARNING", f"VETO on ${ticker}: forensic screen says AVOID "
-                                              f"(Piotroski {verdict.get('piotroski_f_score')}, Beneish {verdict.get('beneish_m_score')}).", ticker=ticker)
+            if not is_hedge:
+                if c["effective_conf"] < settings.MIN_CONFIDENCE:
+                    await self.log("INFO", f"Skip {action} {ticker}: conviction {c['effective_conf']:.0%} < {settings.MIN_CONFIDENCE:.0%}", ticker=ticker)
+                    continue
+                if going_long and not regime.get("allow_new_longs", True):
+                    await self.log("INFO", f"Skip BUY {ticker}: regime {regime.get('regime')} blocks new longs", ticker=ticker)
+                    continue
+                if going_long and ticker in red_flags:
+                    await self.log("WARNING", f"VETO BUY {ticker}: accounting red flag in last 7 days", ticker=ticker)
+                    continue
+                if meta.get("bull_bear_debate", {}).get("verdict") == ("BEAR_DOMINANT" if going_long else "BULL_DOMINANT"):
+                    await self.log("WARNING", f"VETO {action} {ticker}: headlines point the other way", ticker=ticker)
                     continue
 
-            raw_qty = order_size_dollars / curr_price
-            qty = round(raw_qty, 4) if raw_qty < 1 else round(raw_qty, 2)
-            if qty <= 0.0001:
+            held = await self._position(ticker)
+            if held and ((held.qty > 0) == going_long) and not is_hedge:
+                await self._extend_horizon(held, meta.get("horizon_days"))
                 continue
 
-            # Execute without arbitrary time limits on clear indication
-            trade_result = await paper_engine.execute_order(
-                symbol=ticker,
-                side="BUY",
-                qty=qty,
-                current_price=curr_price,
-                reason=f"{catalyst} entry: {title} (conf {effective_conf*100:.0f}%)",
-                catalyst=catalyst,
-                stop_loss_pct=settings.DEFAULT_STOP_LOSS_PCT,
-                take_profit_pct=settings.DEFAULT_TAKE_PROFIT_PCT
-            )
+            q: Optional[Quote] = await asyncio.to_thread(get_quote, ticker)
+            if not q:
+                continue
+            problem = self._listing_problem(q, action)
+            if problem:
+                await self.log("INFO", f"Skip {action} {ticker}: {problem}", ticker=ticker)
+                continue
 
-            if trade_result.get("success"):
-                await self.log("ACTION", f"ENTRY: Bought {qty} shs of ${ticker} @ ${curr_price:.2f} "
-                                          f"(stop -{settings.DEFAULT_STOP_LOSS_PCT*100:.0f}% / target +{settings.DEFAULT_TAKE_PROFIT_PCT*100:.0f}%)", ticker=ticker)
+            if going_long and not is_hedge and c["catalyst"] != "FORENSIC_HIGH_QUALITY" and q.quote_type == "EQUITY":
+                verdict = await asyncio.to_thread(forensic_agent.analyze_ticker, ticker)
+                if verdict.get("recommendation") == "AVOID/SHORT":
+                    await self.log("WARNING", f"VETO BUY {ticker}: forensic screen says AVOID "
+                                              f"(Piotroski {verdict.get('piotroski_f_score')}, Beneish {verdict.get('beneish_m_score')})", ticker=ticker)
+                    continue
+
+            # Size: hedges ask for an exact weight; everything else scales with conviction and regime
+            if is_hedge:
+                target_value = equity * float(meta.get("target_weight", 0))
+            else:
+                target_value = equity * settings.MAX_POSITION_SIZE_PCT * c["effective_conf"] * mult
+            price = q.ask if going_long else q.bid
+            qty = round(target_value / price, 4) if going_long else math.floor(target_value / price)
+            if (going_long and qty * price < 1.0) or (not going_long and qty < 1):
+                unit = "dollar" if going_long else f"share (${price:.2f})"
+                await self.log("INFO", f"Skip {action} {ticker}: ${target_value:.2f} target is below one {unit}", ticker=ticker)
+                continue
+
+            limit_msg = await self._limit_breach(q, qty * price, going_long, equity, is_hedge)
+            if limit_msg:
+                await self.log("INFO", f"Skip {action} {ticker}: {limit_msg}", ticker=ticker)
+                continue
+
+            res = await paper_engine.execute_order(
+                symbol=ticker, side=action, qty=qty, quote=q, agent_name=c.get("agent") or "",
+                reason=f"{c['catalyst']} entry: {c['title']} (conf {c['effective_conf']*100:.0f}%)",
+                catalyst=c["catalyst"], stop_loss_pct=meta.get("stop_loss_pct"),
+                take_profit_pct=meta.get("take_profit_pct"), horizon_days=meta.get("horizon_days"))
+            if res.get("success"):
+                await self.log("ACTION", f"{action} {qty} {ticker} @ ${res['fill_price']:.2f} "
+                                         f"({q.source}, spread {q.spread_bps:.1f} bps, fees ${res['fees']:.2f})", ticker=ticker)
                 if alpaca_client.is_configured():
-                    await alpaca_client.submit_order(symbol=ticker, qty=qty, side="buy")
+                    await alpaca_client.submit_order(symbol=ticker, qty=qty, side="buy" if going_long else "sell")
+            else:
+                await self.log("WARNING", f"{action} {ticker} rejected: {res.get('error')}", ticker=ticker)
 
-    async def _execute_sell_signal(self, ticker: str, title: str):
+    @staticmethod
+    def _listing_problem(q: Quote, action: str) -> Optional[str]:
+        if q.exchange and q.exchange.upper() in OTC_EXCHANGES:
+            return f"over-the-counter listing ({q.exchange})"
+        if q.quote_type and q.quote_type.upper() not in TRADABLE_TYPES:
+            return f"not a stock or ETF ({q.quote_type})"
+        if action == "BUY" and q.last < settings.MIN_LONG_PRICE:
+            return f"price ${q.last:.4f} under ${settings.MIN_LONG_PRICE:.2f}"
+        if action == "SHORT" and q.last < settings.MIN_SHORT_PRICE:
+            return f"price ${q.last:.2f} under ${settings.MIN_SHORT_PRICE:.2f}; not borrowable"
+        return None
+
+    async def _limit_breach(self, q: Quote, order_value: float, going_long: bool,
+                            equity: float, is_hedge: bool) -> Optional[str]:
         async with async_session_factory() as session:
-            pos_res = await session.execute(select(Position).where(Position.symbol == ticker))
-            pos = pos_res.scalars().first()
-            pos_qty = pos.qty if pos else 0.0
+            positions = (await session.execute(select(Position))).scalars().all()
+        long_v = sum(p.market_value for p in positions if p.qty > 0)
+        short_v = -sum(p.market_value for p in positions if p.qty < 0)
+        gross = (long_v + short_v + order_value) / equity
+        net = (long_v - short_v + (order_value if going_long else -order_value)) / equity
+        if gross > settings.MAX_GROSS_EXPOSURE:
+            return f"gross exposure would be {gross:.0%} (max {settings.MAX_GROSS_EXPOSURE:.0%})"
+        if going_long and not is_hedge and net > settings.MAX_NET_EXPOSURE:
+            return f"net exposure would be {net:.0%} (max {settings.MAX_NET_EXPOSURE:.0%})"
+        if not going_long and net < settings.MIN_NET_EXPOSURE:
+            return f"net exposure would be {net:.0%} (min {settings.MIN_NET_EXPOSURE:.0%})"
+        if not is_hedge and q.sector:
+            sector_v = sum(abs(p.market_value) for p in positions if p.sector == q.sector) + order_value
+            if sector_v / equity > settings.MAX_SECTOR_PCT:
+                return f"{q.sector} would be {sector_v / equity:.0%} of equity (max {settings.MAX_SECTOR_PCT:.0%})"
+        return None
 
-        if pos_qty > 0:
-            curr_price = await asyncio.to_thread(_get_live_price_sync, ticker)
-            if curr_price <= 0:
-                await self.log("WARNING", f"SELL signal for {ticker} skipped: no live price. Stop-loss still active.", ticker=ticker)
-                return
-            trade_result = await paper_engine.execute_order(
-                symbol=ticker,
-                side="SELL",
-                qty=pos_qty,
-                current_price=curr_price,
-                reason=f"CIO Exit Trigger: {title}"
-            )
-            if trade_result.get("success"):
-                await self.log("ACTION", f"EXECUTED SELL EXIT: {pos_qty} shares of {ticker} @ ${curr_price:.2f}", ticker=ticker)
-                if alpaca_client.is_configured():
-                    await alpaca_client.submit_order(symbol=ticker, qty=pos_qty, side="sell")
+    async def _extend_horizon(self, pos: Position, horizon_days):
+        if not horizon_days:
+            return
+        new_exit = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=float(horizon_days))
+        async with async_session_factory() as session:
+            p = (await session.execute(select(Position).where(Position.symbol == pos.symbol))).scalars().first()
+            if p and (p.exit_by is None or _aware(p.exit_by) < new_exit):
+                p.exit_by = new_exit
+                await commit_with_retry(session)
+
 
 cio_agent = CioRiskAgent()

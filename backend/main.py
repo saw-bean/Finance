@@ -23,6 +23,13 @@ from backend.agents.cio_risk import cio_agent
 from backend.agents.learning_agent import learning_agent
 from backend.agents.web_intel_agent import web_intel_agent
 from backend.agents.boss_agent import boss_agent
+from backend.agents.momentum_agent import momentum_agent
+from backend.agents.mean_reversion_agent import mean_reversion_agent
+from backend.agents.earnings_agent import earnings_agent
+from backend.agents.analyst_agent import analyst_agent
+from backend.agents.sector_rotation_agent import sector_rotation_agent
+from backend.agents.regime_agent import regime_agent
+from backend.agents.hedging_agent import hedging_agent
 from backend.execution.paper_engine import paper_engine
 from backend.notifications.telegram import telegram_notifier
 
@@ -35,6 +42,13 @@ agent_registry.register(cio_agent)
 agent_registry.register(learning_agent)
 agent_registry.register(web_intel_agent)
 agent_registry.register(boss_agent)
+agent_registry.register(regime_agent)
+agent_registry.register(momentum_agent)
+agent_registry.register(mean_reversion_agent)
+agent_registry.register(earnings_agent)
+agent_registry.register(analyst_agent)
+agent_registry.register(sector_rotation_agent)
+agent_registry.register(hedging_agent)
 
 # Ensure data directory exists
 os.makedirs(os.path.dirname(settings.LOG_FILE_PATH), exist_ok=True)

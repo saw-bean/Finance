@@ -59,9 +59,24 @@ async def commit_with_retry(session: AsyncSession, max_retries: int = 5, base_de
             else:
                 raise
 
+def _add_missing_columns(sync_conn):
+    """create_all() doesn't alter existing tables; add any new model columns in place."""
+    from sqlalchemy import inspect, text
+    insp = inspect(sync_conn)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name not in existing:
+                col_type = col.type.compile(dialect=sync_conn.dialect)
+                sync_conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type}'))
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_missing_columns)
         
     async with async_session_factory() as session:
         res = await session.execute(select(AccountBalance))
@@ -96,8 +111,43 @@ async def init_db():
             },
             {
                 "name": "cio_risk_agent",
-                "display_name": "CIO & Devil's Advocate Risk Agent",
-                "description": "During market hours: vetoes red-flagged tickers, sizes positions by confidence and catalyst record, runs stops and fills paper orders.",
+                "display_name": "CIO & Risk Manager",
+                "description": "Turns signals into long/short positions during market hours under per-name, sector, gross/net exposure, daily-loss and regime limits.",
+            },
+            {
+                "name": "regime_agent",
+                "display_name": "Market Regime Monitor",
+                "description": "Classifies the market (risk-on to crisis) from SPY trend, realized vol, VIX and VIX term structure; sets the fund's risk budget.",
+            },
+            {
+                "name": "momentum_agent",
+                "display_name": "Cross-Sectional Momentum",
+                "description": "Weekly 12-1 month momentum ranks on S&P 100 names: long the top 5 in uptrends, short the bottom 5 in downtrends.",
+            },
+            {
+                "name": "mean_reversion_agent",
+                "display_name": "Short-Term Mean Reversion",
+                "description": "Connors RSI(2) on completed daily bars: buy sharp pullbacks above the 200-day average, short spikes below it; 5-day holds.",
+            },
+            {
+                "name": "earnings_agent",
+                "display_name": "Earnings Surprise Drift",
+                "description": "Watches EDGAR 8-K Item 2.02 earnings releases and trades EPS surprises of 5%+ vs consensus for ~2 months.",
+            },
+            {
+                "name": "analyst_agent",
+                "display_name": "Analyst Revision Clusters",
+                "description": "Tracks sell-side upgrades/downgrades on S&P 100 names; trades when several brokers move the same way within 5 days.",
+            },
+            {
+                "name": "sector_rotation_agent",
+                "display_name": "Sector Rotation",
+                "description": "Ranks the 11 SPDR sector ETFs on 3/6-month strength; long the top 2 in uptrends, short the bottom 2 in downtrends.",
+            },
+            {
+                "name": "hedging_agent",
+                "display_name": "Beta Hedger",
+                "description": "Measures the book's beta to SPY and buys or sells SH (-1x S&P 500) to hold it near the regime's target.",
             },
             {
                 "name": "learning_agent",
@@ -143,6 +193,12 @@ async def init_db():
         default_catalysts = [
             ("SEC_FORM4_CLUSTER_BUY", "SEC Form 4 Insider Buys"),
             ("ACTIVIST_STAKE_13D", "Schedule 13D Activist Stakes"),
+            ("MOMENTUM_12_1", "12-1 Month Momentum"),
+            ("MEAN_REVERSION_RSI2", "RSI(2) Mean Reversion"),
+            ("EARNINGS_SURPRISE", "Earnings Surprise Drift"),
+            ("ANALYST_REVISIONS", "Analyst Revision Clusters"),
+            ("SECTOR_ROTATION", "Sector Rotation"),
+            ("BETA_HEDGE", "Beta Hedge (SH)"),
             ("FORENSIC_HIGH_QUALITY", "Forensic Quality Screen (F>=7, Z>2.99, M<-1.78)"),
             ("GOV_CONTRACT_AWARD", "Federal & Defense Contract Wins"),
             ("SHORT_SQUEEZE_SETUP", "Short Interest Squeeze Setups"),

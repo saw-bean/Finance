@@ -5,7 +5,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrder, onResetPortfolio }) {
   const [manualSymbol, setManualSymbol] = useState('PLTR');
   const [manualSide, setManualSide] = useState('BUY');
-  const [manualQty, setManualQty] = useState(25);
+  const [manualQty, setManualQty] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -198,7 +198,10 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
                         ${p.symbol}
                       </td>
                       <td className="px-4 py-3.5 text-slate-300">
-                        {p.qty}
+                        <span className={`mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${p.qty < 0 ? 'bg-violet-950 text-violet-300 border border-violet-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'}`}>
+                          {p.qty < 0 ? 'SHORT' : 'LONG'}
+                        </span>
+                        {Math.abs(p.qty)}
                       </td>
                       <td className="px-4 py-3.5 text-slate-300">
                         ${p.avg_entry_price?.toFixed(2)}
@@ -215,7 +218,8 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-[11px] text-slate-400">
-                        TP: ${p.take_profit?.toFixed(2)} | SL: ${p.stop_loss?.toFixed(2)}
+                        TP: {p.take_profit != null ? `$${p.take_profit.toFixed(2)}` : 'trailing'} | SL: {p.stop_loss != null ? `$${p.stop_loss.toFixed(2)}` : '—'}
+                        {p.exit_by && <div>Exit by {new Date(p.exit_by).toLocaleDateString()}</div>}
                       </td>
                       <td className="px-4 py-3.5 text-slate-300 truncate max-w-[150px]" title={p.catalyst}>
                         {p.catalyst || 'Manual'}
@@ -272,6 +276,8 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
             >
               <option value="BUY" className="bg-slate-900 text-emerald-400">BUY</option>
               <option value="SELL" className="bg-slate-900 text-rose-400">SELL</option>
+              <option value="SHORT" className="bg-slate-900 text-violet-400">SHORT</option>
+              <option value="COVER" className="bg-slate-900 text-sky-400">COVER</option>
             </select>
           </div>
 
@@ -279,7 +285,8 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
             <span className="text-slate-400">Shares:</span>
             <input
               type="number"
-              min="1"
+              min="0.0001"
+              step="any"
               value={manualQty}
               onChange={(e) => setManualQty(e.target.value)}
               className="w-16 bg-transparent text-slate-100 font-bold focus:outline-none"
@@ -337,7 +344,10 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        t.side === 'BUY' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-rose-950 text-rose-300 border border-rose-800'
+                        t.side === 'BUY' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          : t.side === 'SHORT' ? 'bg-violet-950 text-violet-300 border border-violet-800'
+                          : t.side === 'COVER' ? 'bg-sky-950 text-sky-300 border border-sky-800'
+                          : 'bg-rose-950 text-rose-300 border border-rose-800'
                       }`}>
                         {t.side}
                       </span>
@@ -352,7 +362,7 @@ export default function PortfolioView({ portfolio, onClosePosition, onExecuteOrd
                       ${t.slippage?.toFixed(3)}
                     </td>
                     <td className="px-4 py-2.5">
-                      {t.side === 'SELL' ? (
+                      {(t.side === 'SELL' || t.side === 'COVER') ? (
                         <span className={`font-bold ${t.realized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {t.realized_pnl >= 0 ? '+' : ''}${t.realized_pnl?.toFixed(2)}
                         </span>

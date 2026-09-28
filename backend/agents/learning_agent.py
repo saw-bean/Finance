@@ -30,7 +30,7 @@ class LearningReflectionAgent(BaseAgent):
             # 2. Fetch un-reflected SELL trades (closed positions)
             trades_res = await session.execute(
                 select(Trade)
-                .where(Trade.side == "SELL")
+                .where(Trade.side.in_(("SELL", "COVER")))
                 .order_by(Trade.timestamp.asc())
             )
             closed_trades = trades_res.scalars().all()
@@ -56,37 +56,39 @@ class LearningReflectionAgent(BaseAgent):
 
     async def _analyze_and_learn_from_trade(self, session, sell_trade: Trade):
         """Analyzes a closed trade, extracts catalyst, and generates structured reflection."""
-        # The BUY that opened this position: latest BUY of the symbol before the sell
+        # The trade that opened this position: latest BUY (for a SELL) or SHORT (for a COVER) before it
+        open_side = "BUY" if sell_trade.side == "SELL" else "SHORT"
         buy_res = await session.execute(
             select(Trade)
-            .where(Trade.symbol == sell_trade.symbol, Trade.side == "BUY", Trade.timestamp <= sell_trade.timestamp)
+            .where(Trade.symbol == sell_trade.symbol, Trade.side == open_side, Trade.timestamp <= sell_trade.timestamp)
             .order_by(Trade.timestamp.desc())
         )
         buy_trade = buy_res.scalars().first()
 
         entry_price = buy_trade.price if buy_trade else sell_trade.price
         exit_price = sell_trade.price
-        pnl = sell_trade.realized_pnl
-        pnl_pct = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0.0
+        pnl = sell_trade.realized_pnl or 0.0
+        direction = 1 if open_side == "BUY" else -1
+        pnl_pct = direction * ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0.0
 
-        # CIO entries are recorded as "<CATALYST_TYPE> entry: ..."
-        catalyst = "MANUAL_EXECUTION"
-        m = re.match(r"^([A-Z0-9_]+) entry:", (buy_trade.reason or "") if buy_trade else "")
-        if m:
-            catalyst = m.group(1)
+        catalyst = (buy_trade.catalyst if buy_trade and buy_trade.catalyst else None)
+        if not catalyst:  # trades recorded before the catalyst column existed
+            m = re.match(r"^([A-Z0-9_]+) entry:", (buy_trade.reason or "") if buy_trade else "")
+            catalyst = m.group(1) if m else "MANUAL_EXECUTION"
 
-        outcome = "WIN" if pnl > 0.01 else ("LOSS" if pnl < -0.01 else "BREAKEVEN")
+        outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
         held = ""
         if buy_trade and buy_trade.timestamp and sell_trade.timestamp:
             held = f" after {(sell_trade.timestamp - buy_trade.timestamp).days}d"
 
-        summary = f"{outcome.title()} on ${sell_trade.symbol}: {pnl_pct:+.2f}% (${pnl:+.2f}){held}."
+        kind = "long" if direction == 1 else "short"
+        summary = f"{outcome.title()} on {kind} ${sell_trade.symbol}: {pnl_pct:+.2f}% (${pnl:+.2f}){held}."
         lesson = f"Entry ${entry_price:.2f} via {catalyst}; exit ${exit_price:.2f}. Exit reason: {sell_trade.reason or 'n/a'}."
 
         reflection = TradeReflection(
             trade_id=sell_trade.id,
             symbol=sell_trade.symbol,
-            side="SELL",
+            side=sell_trade.side,
             catalyst=catalyst,
             entry_price=entry_price,
             exit_price=exit_price,

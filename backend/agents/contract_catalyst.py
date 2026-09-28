@@ -134,7 +134,8 @@ class ContractCatalystAgent(BaseAgent):
                                     "description": desc,
                                     "action_date": action_date.isoformat(),
                                     "market_cap": market_cap,
-                                    "award_to_market_cap": round(ratio, 5)
+                                    "award_to_market_cap": round(ratio, 5),
+                                    "horizon_days": 30
                                 }
                             )
 

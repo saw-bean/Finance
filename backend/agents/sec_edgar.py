@@ -139,7 +139,7 @@ class SecEdgarAgent(BaseAgent):
             return self.parse_atom_feed(resp.text)
         except Exception as e:
             logger.error(f"Error fetching SEC feed {form}: {e}")
-            await self.log("ERROR", f"SEC EDGAR feed ({form}) error: {e}")
+            await self.log("ERROR", f"SEC EDGAR feed ({form}) error: {type(e).__name__} {e}")
             return []
 
     @staticmethod
@@ -290,7 +290,8 @@ class SecEdgarAgent(BaseAgent):
                 "purchase_value": round(value, 2),
                 "purchase_shares": parsed["purchase_shares"],
                 "owners": parsed["owners"],
-                "prior_insider_buys_14d": prior_buys
+                "prior_insider_buys_14d": prior_buys,
+                "horizon_days": 60
             }
         )
 
@@ -300,14 +301,14 @@ class SecEdgarAgent(BaseAgent):
             return
         items = entry["items"]
         meta = {"filing_url": entry["link"], "company_name": entry["company_name"], "items": items,
-                "accession_number": entry["accession_number"]}
+                "accession_number": entry["accession_number"], "horizon_days": 30}
 
         if "4.01" in items or "4.02" in items:
             what = "auditor change (Item 4.01)" if "4.01" in items else "non-reliance on prior financials (Item 4.02)"
             await self.emit_signal(
                 ticker=ticker,
                 catalyst_type="ACCOUNTING_RED_FLAG",
-                action="SELL",
+                action="SHORT",
                 confidence=0.85,
                 title=f"8-K accounting red flag: {entry['company_name']}",
                 summary=f"8-K reports {what}.",
@@ -338,7 +339,7 @@ class SecEdgarAgent(BaseAgent):
             title=f"New Schedule 13D (>5% active stake): {entry['company_name']}",
             summary=f"An investor filed an initial Schedule 13D on {entry['company_name']}, disclosing a >5% stake with possible activist intent.",
             metadata={"filing_url": entry["link"], "company_name": entry["company_name"],
-                      "accession_number": entry["accession_number"]}
+                      "accession_number": entry["accession_number"], "horizon_days": 90}
         )
 
 sec_agent = SecEdgarAgent()

@@ -45,7 +45,16 @@ class Settings(BaseSettings):
     MAX_POSITION_SIZE_PCT: float = 0.10
     DEFAULT_STOP_LOSS_PCT: float = 0.05
     DEFAULT_TAKE_PROFIT_PCT: float = 0.15
-    MAX_DAILY_DRAWDOWN_PCT: float = 0.04
+    MAX_DAILY_DRAWDOWN_PCT: float = 0.04    # no new entries for the rest of the day past this loss
+    # Long/short portfolio limits (fractions of equity)
+    ALLOW_SHORTS: bool = True
+    MAX_GROSS_EXPOSURE: float = 1.5
+    MAX_NET_EXPOSURE: float = 1.0
+    MIN_NET_EXPOSURE: float = -0.3
+    MAX_SECTOR_PCT: float = 0.35
+    MIN_LONG_PRICE: float = 2.0
+    MIN_SHORT_PRICE: float = 5.0            # brokers don't lend (marginable) stocks under $5
+    MIN_CONFIDENCE: float = 0.78
     SLIPPAGE_BPS: float = 5.0
     
     # Polling intervals (seconds)

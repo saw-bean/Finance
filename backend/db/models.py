@@ -35,6 +35,13 @@ class Position(Base):
     catalyst = Column(String(128), default="")
     entry_time = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))
     updated_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC), onupdate=lambda: datetime.datetime.now(datetime.UTC))
+    # qty < 0 means a short position
+    side = Column(String(8), default="LONG")
+    agent_name = Column(String(64), default="")
+    sector = Column(String(64), nullable=True)
+    borrow_rate = Column(Float, default=0.0)        # annual rate charged on short market value
+    extreme_price = Column(Float, nullable=True)    # best price since entry (high for longs, low for shorts), for trailing stops
+    exit_by = Column(DateTime, nullable=True)       # time stop: the signal's holding horizon
 
 class Trade(Base):
     __tablename__ = "trades"
@@ -51,6 +58,12 @@ class Trade(Base):
     realized_pnl = Column(Float, default=0.0)
     reason = Column(Text)
     broker = Column(String(32), default="SIMULATED_PAPER")
+    # side: BUY, SELL (close long), SHORT, COVER (close short)
+    catalyst = Column(String(128), default="")
+    agent_name = Column(String(64), default="")
+    fees = Column(Float, default=0.0)          # SEC fee + FINRA TAF (commission is recorded separately)
+    mid_price = Column(Float, nullable=True)   # quote midpoint at fill; price - mid = spread paid
+    quote_source = Column(String(16), default="")  # LIVE_QUOTE or MODELED_SPREAD
 
 class AgentState(Base):
     __tablename__ = "agent_states"
@@ -87,6 +100,19 @@ class PortfolioSnapshot(Base):
     positions_value = Column(Float)
     daily_pnl = Column(Float, default=0.0)
     daily_pnl_pct = Column(Float, default=0.0)
+    long_value = Column(Float, default=0.0)
+    short_value = Column(Float, default=0.0)   # absolute value of short positions
+
+class CashLedger(Base):
+    """Cash movements that are not trades (short borrow fees, etc.)."""
+    __tablename__ = "cash_ledger"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC), index=True)
+    kind = Column(String(32), index=True)  # BORROW_FEE
+    symbol = Column(String(16), nullable=True)
+    amount = Column(Float)                 # negative = cash out
+    note = Column(String(256), default="")
 
 class AccountBalance(Base):
     __tablename__ = "account_balance"

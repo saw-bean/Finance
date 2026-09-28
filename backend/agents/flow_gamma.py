@@ -51,7 +51,8 @@ class FlowGammaAgent(BaseAgent):
                             "days_to_cover": short_ratio,
                             "shares_short": shares_short,
                             "current_price": curr_price,
-                            "float_shares": float_shares
+                            "float_shares": float_shares,
+                            "horizon_days": 10
                         }
                     )
             except Exception as e:

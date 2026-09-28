@@ -7,6 +7,7 @@ import LiveSignals from './components/LiveSignals';
 import AgentWarRoom from './components/AgentWarRoom';
 import ForensicScreener from './components/ForensicScreener';
 import PortfolioView from './components/PortfolioView';
+import PerformanceView from './components/PerformanceView';
 import SettingsModal from './components/SettingsModal';
 
 export default function App() {
@@ -189,6 +190,10 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'performance' && (
+          <PerformanceView />
+        )}
+
         {activeTab === 'boss' && (
           <BossConsole wsConnected={wsConnected} />
         )}
@@ -238,7 +243,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-[#070b12] py-4 text-center text-xs font-mono text-slate-400">
-        AlphaForge Multi-Agent Quant Engine &bull; Adaptive Learning &bull; Public Feeds &bull; Production Mode
+        AlphaForge Paper Long/Short Fund &bull; Public Data Feeds &bull; Simulated Execution
       </footer>
 
     </div>

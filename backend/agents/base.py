@@ -93,6 +93,16 @@ class BaseAgent(ABC):
         })
         return sig
 
+    async def emitted_recently(self, ticker: str, catalyst: str, days: float, action: Optional[str] = None) -> bool:
+        """True if this agent already emitted (ticker, catalyst[, action]) within ``days`` (survives restarts)."""
+        from sqlalchemy import func
+        since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
+        conds = [Signal.ticker == ticker.upper(), Signal.catalyst_type == catalyst, Signal.timestamp >= since]
+        if action:
+            conds.append(Signal.action == action)
+        async with async_session_factory() as session:
+            return ((await session.execute(select(func.count(Signal.id)).where(*conds))).scalar() or 0) > 0
+
     async def update_status(self, status: str, last_error: Optional[str] = None, stats: Optional[Dict[str, Any]] = None):
         """Updates agent lifecycle status in the database."""
         try:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, Brain, Activity, Search, Briefcase, Cpu, Settings, TrendingUp, Clock, Crown } from 'lucide-react';
+import { Home, Brain, Activity, Search, Briefcase, Cpu, Settings, TrendingUp, Clock, Crown, LineChart as LineChartIcon } from 'lucide-react';
 
 export default function Navbar({ activeTab, setActiveTab, status, wsConnected, onOpenSettings }) {
   const account = status?.account || {};
@@ -57,6 +57,7 @@ export default function Navbar({ activeTab, setActiveTab, status, wsConnected, o
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Home },
+    { id: 'performance', label: 'Performance', icon: LineChartIcon },
     { id: 'boss', label: 'Fund Audit', icon: Crown },
     { id: 'learning', label: 'AI Brain & Learning', icon: Brain, badge: 'Adaptive' },
     { id: 'signals', label: 'Live Signals', icon: Activity, badge: status?.total_signals_detected },
