@@ -4,18 +4,31 @@ import logging
 import asyncio
 import httpx
 from zoneinfo import ZoneInfo
+import yfinance as yf
 from sqlalchemy import select, update
 from backend.agents.base import BaseAgent
 from backend.db.session import async_session_factory, commit_with_retry
 from backend.db.models import Signal, Position, AccountBalance, CatalystPerformance
 from backend.execution.paper_engine import paper_engine
 from backend.execution.alpaca_client import alpaca_client
-from backend.agents.forensic_quant import get_live_price
+from backend.agents.forensic_quant import get_live_price, forensic_agent
 from backend.config import settings
 
 logger = logging.getLogger("alphaforge.cio_agent")
 
 SIGNAL_MAX_AGE = datetime.timedelta(days=3)
+MIN_ENTRY_PRICE = 2.0  # below this, spreads and per-share costs swamp any catalyst
+OTC_EXCHANGES = {"PNK", "OQB", "OQX", "OEM", "OTC", "OBB", "OTCQB", "OTCQX", "PINK"}
+
+
+def _listing_check_sync(ticker: str):
+    """Returns (price, exchange code or None). Price 0.0 means no live quote."""
+    price = get_live_price(ticker)
+    try:
+        exchange = yf.Ticker(ticker).fast_info.get("exchange")
+    except Exception:
+        exchange = None
+    return price, exchange
 
 
 def _get_live_price_sync(ticker: str) -> float:
@@ -218,9 +231,23 @@ class CioRiskAgent(BaseAgent):
             if order_size_dollars < 4.0:
                 continue
 
-            curr_price = await asyncio.to_thread(_get_live_price_sync, ticker)
+            curr_price, exchange = await asyncio.to_thread(_listing_check_sync, ticker)
             if curr_price <= 0:
                 continue
+            if curr_price < MIN_ENTRY_PRICE:
+                await self.log("INFO", f"Skipping ${ticker}: price ${curr_price:.4f} below ${MIN_ENTRY_PRICE:.2f} minimum.", ticker=ticker)
+                continue
+            if exchange and exchange.upper() in OTC_EXCHANGES:
+                await self.log("INFO", f"Skipping ${ticker}: over-the-counter listing ({exchange}).", ticker=ticker)
+                continue
+
+            # Don't buy what the forensic screen would immediately flag for exit
+            if catalyst != "FORENSIC_HIGH_QUALITY":
+                verdict = await asyncio.to_thread(forensic_agent.analyze_ticker, ticker)
+                if verdict.get("recommendation") == "AVOID/SHORT":
+                    await self.log("WARNING", f"VETO on ${ticker}: forensic screen says AVOID "
+                                              f"(Piotroski {verdict.get('piotroski_f_score')}, Beneish {verdict.get('beneish_m_score')}).", ticker=ticker)
+                    continue
 
             raw_qty = order_size_dollars / curr_price
             qty = round(raw_qty, 4) if raw_qty < 1 else round(raw_qty, 2)

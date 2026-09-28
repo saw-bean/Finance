@@ -29,3 +29,10 @@ def test_market_hours():
     assert not is_market_open(datetime.datetime(2026, 9, 28, 9, 29, tzinfo=ny))  # before open
     assert not is_market_open(datetime.datetime(2026, 9, 28, 16, 0, tzinfo=ny))  # at close
     assert not is_market_open(datetime.datetime(2026, 9, 27, 12, 0, tzinfo=ny))  # Sunday
+
+
+def test_sub_dollar_stops_keep_precision():
+    from backend.execution.paper_engine import round_price
+    # A $0.006 stock with a 5% stop must not round its stop up to the price itself
+    assert round_price(0.006 * 0.95) == 0.0057
+    assert round_price(123.456) == 123.46

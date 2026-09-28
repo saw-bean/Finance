@@ -10,6 +10,11 @@ from backend.notifications.telegram import telegram_notifier
 
 logger = logging.getLogger("alphaforge.paper_engine")
 
+
+def round_price(p: float) -> float:
+    """Cents for normal stocks; 4 decimals below $1 so a sub-dollar stop isn't rounded onto the price."""
+    return round(p, 2) if p >= 1 else round(p, 4)
+
 class PaperTradingEngine:
     def __init__(self):
         self.slippage_bps = settings.SLIPPAGE_BPS
@@ -96,8 +101,8 @@ class PaperTradingEngine:
                         pos.market_value = round(new_qty * fill_price, 2)
                         pos.unrealized_pnl = round(pos.market_value - (new_qty * pos.avg_entry_price), 2)
                         pos.unrealized_pnl_pct = round((pos.unrealized_pnl / (new_qty * pos.avg_entry_price)) * 100, 2)
-                        pos.stop_loss = round(stop_loss, 2)
-                        pos.take_profit = round(take_profit, 2)
+                        pos.stop_loss = round_price(stop_loss)
+                        pos.take_profit = round_price(take_profit)
                         pos.updated_at = datetime.datetime.now(datetime.UTC)
                     else:
                         pos = Position(
@@ -108,8 +113,8 @@ class PaperTradingEngine:
                             market_value=round(qty * fill_price, 2),
                             unrealized_pnl=0.0,
                             unrealized_pnl_pct=0.0,
-                            stop_loss=round(stop_loss, 2),
-                            take_profit=round(take_profit, 2),
+                            stop_loss=round_price(stop_loss),
+                            take_profit=round_price(take_profit),
                             catalyst=catalyst,
                             entry_time=datetime.datetime.now(datetime.UTC),
                             updated_at=datetime.datetime.now(datetime.UTC)
@@ -259,7 +264,7 @@ class PaperTradingEngine:
                     
                     # Tier 1: At +8% gain, move stop-loss to Breakeven (+1.0%) to lock in zero risk
                     if gain_pct >= 8.0:
-                        breakeven_stop = round(p.avg_entry_price * 1.01, 2)
+                        breakeven_stop = round_price(p.avg_entry_price * 1.01)
                         if not p.stop_loss or p.stop_loss < breakeven_stop:
                             p.stop_loss = breakeven_stop
                             logger.info(f"RATCHET STOP: Raised stop-loss on {p.symbol} to Breakeven (${breakeven_stop:.2f}) at +{gain_pct:.1f}% gain.")
@@ -267,7 +272,7 @@ class PaperTradingEngine:
                     # Tier 2: At >= +15% gain, enable Trailing Profit Runner mode (trail 5% below peak)
                     # Lets multi-bagger runners run to +30%, +50%, +100%+ while protecting profits!
                     if gain_pct >= 15.0:
-                        trailing_stop = round(curr_price * 0.95, 2)
+                        trailing_stop = round_price(curr_price * 0.95)
                         if not p.stop_loss or p.stop_loss < trailing_stop:
                             p.stop_loss = trailing_stop
                             logger.info(f"PROFIT RUNNER: Trailing stop on {p.symbol} raised to ${trailing_stop:.2f} (trailing peak at +{gain_pct:.1f}% gain).")
